@@ -6,40 +6,9 @@
 
 struct js_platform_s {
   uv_loop_t *loop;
-  uv_prepare_t prepare;
-  uv_check_t check;
 
   js_platform_s(uv_loop_t *loop)
-      : loop(loop),
-        prepare(),
-        check() {
-    uv_prepare_init(loop, &prepare);
-    uv_prepare_start(&prepare, on_prepare);
-
-    uv_check_init(loop, &check);
-    uv_check_start(&check, on_check);
-
-    // The check handle should not on its own keep the loop alive; it's simply
-    // used for running any outstanding tasks that might cause additional work
-    // to be queued.
-    uv_unref(reinterpret_cast<uv_handle_t *>(&check));
-
-    prepare.data = this;
-    check.data = this;
-  }
-
-private:
-  static void
-  on_prepare (uv_prepare_t *handle) {
-    auto platform = reinterpret_cast<js_platform_t *>(handle->data);
-  }
-
-  static void
-  on_check (uv_check_t *handle) {
-    auto platform = reinterpret_cast<js_platform_t *>(handle->data);
-
-    if (uv_loop_alive(platform->loop)) return;
-  }
+      : loop(loop) {}
 };
 
 struct js_env_s {
@@ -78,19 +47,45 @@ struct js_env_s {
 
   ~js_env_s() {
     js_close_handle_scope(this, scope);
+
+    JS_FreeContext(context);
+    JS_FreeRuntime(runtime);
   }
 
 private:
+  inline void
+  run_jobs () {
+    for (;;) {
+      int err = JS_ExecutePendingJob(runtime, &context);
+      if (err <= 0) break;
+    }
+  }
+
+  inline void
+  check_liveness () {
+    if (JS_IsJobPending(runtime)) {
+      uv_prepare_start(&prepare, on_prepare);
+    } else {
+      uv_prepare_stop(&prepare);
+    }
+  }
+
   static void
   on_prepare (uv_prepare_t *handle) {
     auto env = reinterpret_cast<js_env_t *>(handle->data);
+
+    env->check_liveness();
   }
 
   static void
   on_check (uv_check_t *handle) {
     auto env = reinterpret_cast<js_env_t *>(handle->data);
 
+    env->run_jobs();
+
     if (uv_loop_alive(env->loop)) return;
+
+    env->check_liveness();
   }
 };
 
@@ -169,9 +164,6 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
 
 int
 js_destroy_env (js_env_t *env) {
-  JS_FreeContext(env->context);
-  JS_FreeRuntime(env->runtime);
-
   delete env;
 
   return 0;
