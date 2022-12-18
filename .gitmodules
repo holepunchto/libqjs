@@ -1,0 +1,6 @@
+[submodule "vendor/libjs"]
+	path = vendor/libjs
+	url = git@github.com:holepunchto/libjs.git
+[submodule "vendor/libuv"]
+	path = vendor/libuv
+	url = git@github.com:libuv/libuv.git
