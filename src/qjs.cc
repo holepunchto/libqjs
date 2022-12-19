@@ -4,6 +4,24 @@
 #include <quickjs.h>
 #include <uv.h>
 
+typedef struct js_task_s js_task_t;
+
+struct js_task_s {
+  js_env_t *env;
+  js_task_cb cb;
+  void *data;
+
+  js_task_s(js_env_t *env, js_task_cb cb, void *data)
+      : env(env),
+        cb(cb),
+        data(data) {}
+
+  inline void
+  run () {
+    cb(env, data);
+  }
+};
+
 struct js_platform_s {
   uv_loop_t *loop;
 
@@ -28,33 +46,34 @@ struct js_env_s {
         scope(),
         runtime(runtime),
         context(context) {
+    JS_SetRuntimeOpaque(runtime, this);
+    JS_SetContextOpaque(context, this);
+
     js_open_handle_scope(this, &scope);
 
     uv_prepare_init(loop, &prepare);
     uv_prepare_start(&prepare, on_prepare);
+    prepare.data = this;
 
     uv_check_init(loop, &check);
     uv_check_start(&check, on_check);
+    check.data = this;
 
     // The check handle should not on its own keep the loop alive; it's simply
     // used for running any outstanding tasks that might cause additional work
     // to be queued.
     uv_unref(reinterpret_cast<uv_handle_t *>(&check));
-
-    prepare.data = this;
-    check.data = this;
   }
 
   ~js_env_s() {
     js_close_handle_scope(this, scope);
-
-    JS_FreeContext(context);
-    JS_FreeRuntime(runtime);
   }
 
 private:
   inline void
-  run_jobs () {
+  run_microtasks () {
+    JSContext *context;
+
     for (;;) {
       int err = JS_ExecutePendingJob(runtime, &context);
       if (err <= 0) break;
@@ -63,10 +82,10 @@ private:
 
   inline void
   check_liveness () {
-    if (JS_IsJobPending(runtime)) {
-      uv_prepare_start(&prepare, on_prepare);
-    } else {
+    if (true /* macrotask queue empty */) {
       uv_prepare_stop(&prepare);
+    } else {
+      uv_prepare_start(&prepare, on_prepare);
     }
   }
 
@@ -81,7 +100,7 @@ private:
   on_check (uv_check_t *handle) {
     auto env = reinterpret_cast<js_env_t *>(handle->data);
 
-    env->run_jobs();
+    env->run_microtasks();
 
     if (uv_loop_alive(env->loop)) return;
 
@@ -121,7 +140,7 @@ struct js_value_s {
 struct js_ref_s {
 };
 
-int
+extern "C" int
 js_create_platform (uv_loop_t *loop, js_platform_t **result) {
   auto platform = new js_platform_t(loop);
 
@@ -130,14 +149,14 @@ js_create_platform (uv_loop_t *loop, js_platform_t **result) {
   return 0;
 }
 
-int
+extern "C" int
 js_destroy_platform (js_platform_t *platform) {
   delete platform;
 
   return 0;
 }
 
-int
+extern "C" int
 js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   auto runtime = JS_NewRuntime();
   auto context = JS_NewContextRaw(runtime);
@@ -162,14 +181,17 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   return 0;
 }
 
-int
+extern "C" int
 js_destroy_env (js_env_t *env) {
+  JS_FreeContext(env->context);
+  JS_FreeRuntime(env->runtime);
+
   delete env;
 
   return 0;
 }
 
-int
+extern "C" int
 js_open_handle_scope (js_env_t *env, js_handle_scope_t **result) {
   auto scope = new js_handle_scope_t(env->scope);
 
@@ -178,7 +200,7 @@ js_open_handle_scope (js_env_t *env, js_handle_scope_t **result) {
   return 0;
 }
 
-int
+extern "C" int
 js_close_handle_scope (js_env_t *env, js_handle_scope_t *scope) {
   if (env->scope != scope) return -1;
 
@@ -197,7 +219,7 @@ js_close_handle_scope (js_env_t *env, js_handle_scope_t *scope) {
   return 0;
 }
 
-int
+extern "C" int
 js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
   const char *str = JS_ToCString(env->context, source->value);
 
@@ -208,7 +230,7 @@ js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
   return 0;
 }
 
-int
+extern "C" int
 js_create_string_utf8 (js_env_t *env, const char *str, size_t len, js_value_t **result) {
   JSValue value;
 
@@ -223,16 +245,62 @@ js_create_string_utf8 (js_env_t *env, const char *str, size_t len, js_value_t **
   return 0;
 }
 
-int
+extern "C" int
 js_get_value_int32 (js_env_t *env, js_value_t *value, int32_t *result) {
   JS_ToInt32(env->context, result, value->value);
 
   return 0;
 }
 
-int
+extern "C" int
 js_get_value_uint32 (js_env_t *env, js_value_t *value, uint32_t *result) {
   JS_ToUint32(env->context, result, value->value);
+
+  return 0;
+}
+
+static JSClassID js_job_data_class_id;
+
+static uv_once_t js_job_init = UV_ONCE_INIT;
+
+static void
+js_on_job_init () {
+  JS_NewClassID(&js_job_data_class_id);
+}
+
+static JSValue
+on_job (JSContext *context, int argc, JSValueConst *argv) {
+  auto env = reinterpret_cast<js_env_t *>(JS_GetContextOpaque(context));
+
+  auto external = argv[0];
+
+  auto task = reinterpret_cast<js_task_t *>(JS_GetOpaque(external, js_job_data_class_id));
+
+  task->run();
+
+  return JS_NULL;
+}
+
+extern "C" int
+js_queue_microtask (js_env_t *env, js_task_cb cb, void *data) {
+  uv_once(&js_job_init, js_on_job_init);
+
+  auto task = new js_task_t(env, cb, data);
+
+  JSValue external = JS_NewObjectClass(env->context, js_job_data_class_id);
+
+  JS_SetOpaque(external, task);
+
+  JS_EnqueueJob(env->context, on_job, 1, &external);
+
+  JS_FreeValue(env->context, external);
+
+  return 0;
+}
+
+extern "C" int
+js_request_garbage_collection (js_env_t *env) {
+  JS_RunGC(env->runtime);
 
   return 0;
 }

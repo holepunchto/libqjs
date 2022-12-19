@@ -1,4 +1,5 @@
 list(APPEND tests
+  run-microtask
   run-script
 )
 
