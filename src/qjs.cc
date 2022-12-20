@@ -551,6 +551,8 @@ js_get_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
 
 extern "C" int
 js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_value_t *value) {
+  value->ref();
+
   JS_SetPropertyStr(env->context, object->value, name, value->value);
 
   return 0;
@@ -569,7 +571,7 @@ static JSValue
 on_job (JSContext *context, int argc, JSValueConst *argv) {
   auto env = reinterpret_cast<js_env_t *>(JS_GetContextOpaque(context));
 
-  auto external = argv[0];
+  auto external = *argv;
 
   auto task = reinterpret_cast<js_task_t *>(JS_GetOpaque(external, js_job_data_class_id));
 
