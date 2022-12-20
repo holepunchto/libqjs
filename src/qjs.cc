@@ -121,11 +121,11 @@ struct js_value_s {
   js_value_s(const js_value_s &that)
       : context(that.context),
         value(that.value) {
-    ref();
+    JS_DupValue(context, value);
   }
 
   ~js_value_s() {
-    unref();
+    JS_FreeValue(context, value);
   }
 
   js_value_s &
@@ -133,19 +133,9 @@ struct js_value_s {
     context = that.context;
     value = that.value;
 
-    ref();
+    JS_DupValue(context, value);
 
     return *this;
-  }
-
-  inline void
-  ref () {
-    JS_DupValue(context, value);
-  }
-
-  inline void
-  unref () {
-    JS_FreeValue(context, value);
   }
 };
 
@@ -417,16 +407,18 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
   args.reserve(argc);
 
   for (int i = 0; i < argc; i++) {
+    JS_DupValue(context, argv[i]);
+
     auto arg = new js_value_t(env->context, argv[i]);
-    arg->ref();
 
     env->scope->push(arg);
 
     args.push_back(arg);
   }
 
+  JS_DupValue(context, self);
+
   auto receiver = new js_value_t(env->context, self);
-  receiver->ref();
 
   env->scope->push(receiver);
 
@@ -438,9 +430,9 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
 
   if (result == nullptr) value = JS_UNDEFINED;
   else {
-    result->ref();
-
     value = result->value;
+
+    JS_DupValue(context, value);
   }
 
   js_close_handle_scope(env, scope);
@@ -559,7 +551,7 @@ js_get_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
 
 extern "C" int
 js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_value_t *value) {
-  value->ref();
+  JS_DupValue(env->context, value->value);
 
   JS_SetPropertyStr(env->context, object->value, name, value->value);
 
