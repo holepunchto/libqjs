@@ -51,8 +51,6 @@ struct js_env_s {
     JS_SetRuntimeOpaque(runtime, this);
     JS_SetContextOpaque(context, this);
 
-    js_open_handle_scope(this, &scope);
-
     uv_prepare_init(loop, &prepare);
     uv_prepare_start(&prepare, on_prepare);
     prepare.data = this;
@@ -65,6 +63,8 @@ struct js_env_s {
     // used for running any outstanding tasks that might cause additional work
     // to be queued.
     uv_unref(reinterpret_cast<uv_handle_t *>(&check));
+
+    js_open_handle_scope(this, &scope);
   }
 
   ~js_env_s() {
@@ -130,8 +130,6 @@ struct js_value_s {
 
   js_value_s &
   operator=(const js_value_s &that) {
-    if (this == &that) return *this;
-
     context = that.context;
     value = that.value;
 
@@ -258,10 +256,13 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
 
 extern "C" int
 js_destroy_env (js_env_t *env) {
-  JS_FreeContext(env->context);
-  JS_FreeRuntime(env->runtime);
+  auto runtime = env->runtime;
+  auto context = env->context;
 
   delete env;
+
+  JS_FreeContext(context);
+  JS_FreeRuntime(runtime);
 
   return 0;
 }
@@ -341,7 +342,9 @@ js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
 
   JSValue value = JS_Eval(env->context, str, str_len, "<anonymous>", JS_EVAL_TYPE_GLOBAL);
 
-  *result = new js_value_t(env->context, std::move(value));
+  JS_FreeCString(env->context, str);
+
+  *result = new js_value_t(env->context, value);
 
   env->scope->push(*result);
 
@@ -376,7 +379,7 @@ js_create_string_utf8 (js_env_t *env, const char *str, size_t len, js_value_t **
     value = JS_NewStringLen(env->context, str, len);
   }
 
-  *result = new js_value_t(env->context, std::move(value));
+  *result = new js_value_t(env->context, value);
 
   env->scope->push(*result);
 
@@ -403,15 +406,14 @@ on_function_init () {
 
 static JSValue
 on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst *argv, int magic, JSValue *data) {
-  auto callback = reinterpret_cast<js_callback_t *>(JS_GetOpaque(data[0], js_function_data_class_id));
+  auto callback = reinterpret_cast<js_callback_t *>(JS_GetOpaque(*data, js_function_data_class_id));
 
   auto env = callback->env;
 
   js_handle_scope_t *scope;
   js_open_handle_scope(env, &scope);
 
-  std::vector<js_value_t *> args;
-
+  auto args = std::vector<js_value_t *>();
   args.reserve(argc);
 
   for (int i = 0; i < argc; i++) {
@@ -428,19 +430,22 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
 
   env->scope->push(receiver);
 
-  js_callback_info_t callback_info(
-    args,
-    receiver,
-    callback->data
-  );
+  auto callback_info = js_callback_info_t(args, receiver, callback->data);
 
-  auto result = callback->cb(env, &callback_info)->value;
+  auto result = callback->cb(env, &callback_info);
 
-  JS_DupValue(context, result);
+  JSValue value;
+
+  if (result == nullptr) value = JS_UNDEFINED;
+  else {
+    result->ref();
+
+    value = result->value;
+  }
 
   js_close_handle_scope(env, scope);
 
-  return result;
+  return value;
 }
 
 extern "C" int
@@ -463,8 +468,8 @@ js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb 
 extern "C" int
 js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *argc, js_value_t *argv[], js_value_t **self, void **data) {
   if (argc) *argc = info->args.size();
-  if (argv) *argv = *const_cast<js_callback_info_t *>(info)->args.data();
-  if (self) *self = const_cast<js_callback_info_t *>(info)->self;
+  if (argv) *argv = *info->args.data();
+  if (self) *self = info->self;
   if (data) *data = info->data;
 
   return 0;
