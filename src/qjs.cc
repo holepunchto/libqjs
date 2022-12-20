@@ -1,10 +1,12 @@
 #include <queue>
+#include <vector>
 
 #include <js.h>
 #include <quickjs.h>
 #include <uv.h>
 
 typedef struct js_task_s js_task_t;
+typedef struct js_callback_s js_callback_t;
 
 struct js_task_s {
   js_env_t *env;
@@ -108,36 +110,92 @@ private:
   }
 };
 
-struct js_handle_scope_s {
-  js_handle_scope_t *parent;
-  std::queue<const js_value_t *> values;
-
-  js_handle_scope_s(js_handle_scope_t *parent)
-      : parent(parent),
-        values() {}
-
-  void
-  push (const js_value_t *value) {
-    values.push(value);
-  }
-};
-
 struct js_value_s {
   JSContext *context;
   JSValue value;
 
-  js_value_s(js_handle_scope_t *scope, JSContext *context, JSValue &&value)
+  js_value_s(JSContext *context, JSValue value)
       : context(context),
-        value(std::move(value)) {
-    scope->push(this);
+        value(value) {}
+
+  js_value_s(const js_value_s &that)
+      : context(that.context),
+        value(that.value) {
+    JS_DupValue(context, value);
   }
 
   ~js_value_s() {
     JS_FreeValue(context, value);
   }
+
+  js_value_s &
+  operator=(const js_value_s &that) {
+    if (this == &that) return *this;
+
+    context = that.context;
+    value = that.value;
+
+    JS_DupValue(context, value);
+
+    return *this;
+  }
+};
+
+struct js_handle_scope_s {
+  js_handle_scope_t *parent;
+  std::queue<js_value_t *> values;
+
+  js_handle_scope_s(js_handle_scope_t *parent)
+      : parent(parent),
+        values() {}
+
+  inline void
+  push (js_value_t *value) {
+    values.push(value);
+  }
+
+  inline void
+  close () {
+    while (!values.empty()) {
+      auto value = values.front();
+      values.pop();
+
+      delete value;
+    }
+  }
+};
+
+struct js_escapable_handle_scope_s : public js_handle_scope_s {
+  bool escaped;
+
+  js_escapable_handle_scope_s(js_handle_scope_t *parent)
+      : js_handle_scope_t(parent),
+        escaped(false) {}
 };
 
 struct js_ref_s {
+};
+
+struct js_callback_s {
+  js_env_t *env;
+  js_function_cb cb;
+  void *data;
+
+  js_callback_s(js_env_t *env, js_function_cb cb, void *data)
+      : env(env),
+        cb(cb),
+        data(data) {}
+};
+
+struct js_callback_info_s {
+  std::vector<js_value_t *> args;
+  js_value_t *self;
+  void *data;
+
+  js_callback_info_s(std::vector<js_value_t *> args, js_value_t *self, void *data)
+      : args(args),
+        self(self),
+        data(data) {}
 };
 
 extern "C" int
@@ -152,6 +210,13 @@ js_create_platform (uv_loop_t *loop, js_platform_t **result) {
 extern "C" int
 js_destroy_platform (js_platform_t *platform) {
   delete platform;
+
+  return 0;
+}
+
+extern "C" int
+js_get_platform_loop (js_platform_t *platform, uv_loop_t **result) {
+  *result = platform->loop;
 
   return 0;
 }
@@ -192,10 +257,19 @@ js_destroy_env (js_env_t *env) {
 }
 
 extern "C" int
+js_get_env_loop (js_env_t *env, uv_loop_t **result) {
+  *result = env->loop;
+
+  return 0;
+}
+
+extern "C" int
 js_open_handle_scope (js_env_t *env, js_handle_scope_t **result) {
   auto scope = new js_handle_scope_t(env->scope);
 
-  *result = env->scope = scope;
+  env->scope = scope;
+
+  *result = scope;
 
   return 0;
 }
@@ -204,13 +278,30 @@ extern "C" int
 js_close_handle_scope (js_env_t *env, js_handle_scope_t *scope) {
   if (env->scope != scope) return -1;
 
-  while (!scope->values.empty()) {
-    auto value = scope->values.front();
+  env->scope->close();
+  env->scope = scope->parent;
 
-    scope->values.pop();
+  delete scope;
 
-    delete value;
-  }
+  return 0;
+}
+
+extern "C" int
+js_open_escapable_handle_scope (js_env_t *env, js_escapable_handle_scope_t **result) {
+  auto scope = new js_escapable_handle_scope_t(env->scope);
+
+  env->scope = scope;
+
+  *result = scope;
+
+  return 0;
+}
+
+extern "C" int
+js_close_escapable_handle_scope (js_env_t *env, js_escapable_handle_scope_t *scope) {
+  if (env->scope != scope) return -1;
+
+  env->scope->close();
 
   env->scope = scope->parent;
 
@@ -220,12 +311,46 @@ js_close_handle_scope (js_env_t *env, js_handle_scope_t *scope) {
 }
 
 extern "C" int
+js_escape_handle (js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t *escapee, js_value_t **result) {
+  if (env->scope != scope || scope->escaped) return -1;
+
+  scope->escaped = true;
+
+  *result = new js_value_t(*escapee);
+
+  scope->parent->push(*result);
+
+  return 0;
+}
+
+extern "C" int
 js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
-  const char *str = JS_ToCString(env->context, source->value);
+  size_t str_len;
+  const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
 
-  JSValue value = JS_Eval(env->context, str, -1, "<eval>", JS_EVAL_TYPE_GLOBAL);
+  JSValue value = JS_Eval(env->context, str, str_len, "<anonymous>", JS_EVAL_TYPE_GLOBAL);
 
-  *result = new js_value_t(env->scope, env->context, std::move(value));
+  *result = new js_value_t(env->context, std::move(value));
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_create_int32 (js_env_t *env, int32_t value, js_value_t **result) {
+  *result = new js_value_t(env->context, JS_NewInt32(env->context, value));
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_create_uint32 (js_env_t *env, uint32_t value, js_value_t **result) {
+  *result = new js_value_t(env->context, JS_NewUint32(env->context, value));
+
+  env->scope->push(*result);
 
   return 0;
 }
@@ -240,7 +365,134 @@ js_create_string_utf8 (js_env_t *env, const char *str, size_t len, js_value_t **
     value = JS_NewStringLen(env->context, str, len);
   }
 
-  *result = new js_value_t(env->scope, env->context, std::move(value));
+  *result = new js_value_t(env->context, std::move(value));
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_create_object (js_env_t *env, js_value_t **result) {
+  *result = new js_value_t(env->context, JS_NewObject(env->context));
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+static JSClassID js_function_data_class_id;
+
+static uv_once_t js_function_init = UV_ONCE_INIT;
+
+static void
+on_function_init () {
+  JS_NewClassID(&js_function_data_class_id);
+}
+
+static JSValue
+on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst *argv, int magic, JSValue *data) {
+  auto callback = reinterpret_cast<js_callback_t *>(JS_GetOpaque(data[0], js_function_data_class_id));
+
+  auto env = callback->env;
+
+  js_handle_scope_t *scope;
+  js_open_handle_scope(env, &scope);
+
+  std::vector<js_value_t *> args;
+
+  args.reserve(argc);
+
+  for (int i = 0; i < argc; i++) {
+    auto arg = new js_value_t(env->context, argv[i]);
+
+    JS_DupValue(env->context, arg->value);
+
+    env->scope->push(arg);
+
+    args.push_back(arg);
+  }
+
+  auto receiver = new js_value_t(env->context, self);
+
+  JS_DupValue(env->context, receiver->value);
+
+  env->scope->push(receiver);
+
+  js_callback_info_t callback_info(
+    args,
+    receiver,
+    callback->data
+  );
+
+  auto result = callback->cb(env, &callback_info)->value;
+
+  JS_DupValue(context, result);
+
+  js_close_handle_scope(env, scope);
+
+  return result;
+}
+
+extern "C" int
+js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb cb, void *data, js_value_t **result) {
+  uv_once(&js_function_init, on_function_init);
+
+  auto callback = new js_callback_t(env, cb, data);
+
+  auto external = js_value_t(env->context, JS_NewObjectClass(env->context, js_function_data_class_id));
+
+  JS_SetOpaque(external.value, callback);
+
+  *result = new js_value_t(env->context, JS_NewCFunctionData(env->context, on_function_call, 0, 0, 1, &external.value));
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *argc, js_value_t *argv[], js_value_t **self, void **data) {
+  if (argc) *argc = info->args.size();
+  if (argv) *argv = *const_cast<js_callback_info_t *>(info)->args.data();
+  if (self) *self = const_cast<js_callback_info_t *>(info)->self;
+  if (data) *data = info->data;
+
+  return 0;
+}
+
+extern "C" int
+js_get_global (js_env_t *env, js_value_t **result) {
+  *result = new js_value_t(env->context, JS_GetGlobalObject(env->context));
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_get_null (js_env_t *env, js_value_t **result) {
+  *result = new js_value_t(env->context, JS_NULL);
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_get_undefined (js_env_t *env, js_value_t **result) {
+  *result = new js_value_t(env->context, JS_UNDEFINED);
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_get_boolean (js_env_t *env, bool value, js_value_t **result) {
+  *result = new js_value_t(env->context, value ? JS_TRUE : JS_FALSE);
+
+  env->scope->push(*result);
 
   return 0;
 }
@@ -259,12 +511,43 @@ js_get_value_uint32 (js_env_t *env, js_value_t *value, uint32_t *result) {
   return 0;
 }
 
+extern "C" int
+js_get_value_string_utf8 (js_env_t *env, js_value_t *value, char *str, size_t len, size_t *result) {
+  size_t cstr_len;
+  const char *cstr = JS_ToCStringLen(env->context, &cstr_len, value->value);
+
+  if (str == nullptr) *result = cstr_len;
+  else {
+    strncpy(str, cstr, len);
+  }
+
+  JS_FreeCString(env->context, cstr);
+
+  return 0;
+}
+
+extern "C" int
+js_get_named_property (js_env_t *env, js_value_t *object, const char *name, js_value_t **result) {
+  *result = new js_value_t(env->context, JS_GetPropertyStr(env->context, object->value, name));
+
+  env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_value_t *value) {
+  JS_SetPropertyStr(env->context, object->value, name, value->value);
+
+  return 0;
+}
+
 static JSClassID js_job_data_class_id;
 
 static uv_once_t js_job_init = UV_ONCE_INIT;
 
 static void
-js_on_job_init () {
+on_job_init () {
   JS_NewClassID(&js_job_data_class_id);
 }
 
@@ -283,17 +566,15 @@ on_job (JSContext *context, int argc, JSValueConst *argv) {
 
 extern "C" int
 js_queue_microtask (js_env_t *env, js_task_cb cb, void *data) {
-  uv_once(&js_job_init, js_on_job_init);
+  uv_once(&js_job_init, on_job_init);
 
   auto task = new js_task_t(env, cb, data);
 
-  JSValue external = JS_NewObjectClass(env->context, js_job_data_class_id);
+  auto external = js_value_t(env->context, JS_NewObjectClass(env->context, js_job_data_class_id));
 
-  JS_SetOpaque(external, task);
+  JS_SetOpaque(external.value, task);
 
-  JS_EnqueueJob(env->context, on_job, 1, &external);
-
-  JS_FreeValue(env->context, external);
+  JS_EnqueueJob(env->context, on_job, 1, &external.value);
 
   return 0;
 }

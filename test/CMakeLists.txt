@@ -1,6 +1,8 @@
 list(APPEND tests
+  create-function
   run-microtask
   run-script
+  set-named-property
 )
 
 foreach(test IN LISTS tests)
