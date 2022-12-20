@@ -121,11 +121,11 @@ struct js_value_s {
   js_value_s(const js_value_s &that)
       : context(that.context),
         value(that.value) {
-    JS_DupValue(context, value);
+    ref();
   }
 
   ~js_value_s() {
-    JS_FreeValue(context, value);
+    unref();
   }
 
   js_value_s &
@@ -135,9 +135,19 @@ struct js_value_s {
     context = that.context;
     value = that.value;
 
-    JS_DupValue(context, value);
+    ref();
 
     return *this;
+  }
+
+  inline void
+  ref () {
+    JS_DupValue(context, value);
+  }
+
+  inline void
+  unref () {
+    JS_FreeValue(context, value);
   }
 };
 
@@ -279,6 +289,7 @@ js_close_handle_scope (js_env_t *env, js_handle_scope_t *scope) {
   if (env->scope != scope) return -1;
 
   env->scope->close();
+
   env->scope = scope->parent;
 
   delete scope;
@@ -405,8 +416,7 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
 
   for (int i = 0; i < argc; i++) {
     auto arg = new js_value_t(env->context, argv[i]);
-
-    JS_DupValue(env->context, arg->value);
+    arg->ref();
 
     env->scope->push(arg);
 
@@ -414,8 +424,7 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
   }
 
   auto receiver = new js_value_t(env->context, self);
-
-  JS_DupValue(env->context, receiver->value);
+  receiver->ref();
 
   env->scope->push(receiver);
 
