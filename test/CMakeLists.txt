@@ -1,5 +1,7 @@
 list(APPEND tests
   create-function
+  create-reference
+  create-reference-weak
   run-microtask
   run-script
   set-named-property

@@ -25,10 +25,12 @@ struct js_task_s {
 };
 
 struct js_platform_s {
+  js_platform_options_t options;
   uv_loop_t *loop;
 
-  js_platform_s(uv_loop_t *loop)
-      : loop(loop) {}
+  js_platform_s(js_platform_options_t options, uv_loop_t *loop)
+      : options(options),
+        loop(loop) {}
 };
 
 struct js_env_s {
@@ -172,6 +174,19 @@ struct js_escapable_handle_scope_s : public js_handle_scope_s {
 };
 
 struct js_ref_s {
+  JSContext *context;
+  JSValue value;
+  uint32_t count;
+
+  js_ref_s(JSContext *context, JSValue value, uint32_t count)
+      : context(context),
+        value(value),
+        count(count) {}
+
+  js_ref_s(const js_ref_s &) = delete;
+
+  js_value_s &
+  operator=(const js_value_s &that) = delete;
 };
 
 struct js_callback_s {
@@ -197,8 +212,8 @@ struct js_callback_info_s {
 };
 
 extern "C" int
-js_create_platform (uv_loop_t *loop, js_platform_t **result) {
-  auto platform = new js_platform_t(loop);
+js_create_platform (uv_loop_t *loop, const js_platform_options_t *options, js_platform_t **result) {
+  auto platform = new js_platform_t(options ? *options : js_platform_options_t(), loop);
 
   *result = platform;
 
@@ -337,6 +352,69 @@ js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
   *result = new js_value_t(env->context, value);
 
   env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t **result) {
+  auto reference = new js_ref_t(value->context, value->value, count);
+
+  if (reference->count > 0) JS_DupValue(reference->context, reference->value);
+
+  *result = reference;
+
+  return 0;
+}
+
+extern "C" int
+js_delete_reference (js_env_t *env, js_ref_t *reference) {
+  if (reference->count > 0) JS_FreeValue(reference->context, reference->value);
+
+  delete reference;
+
+  return 0;
+}
+
+extern "C" int
+js_reference_ref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
+  if (reference->count == 0) return -1;
+
+  reference->count++;
+
+  if (result != nullptr) {
+    *result = reference->count;
+  }
+
+  return 0;
+}
+
+extern "C" int
+js_reference_unref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
+  if (reference->count == 0) return -1;
+
+  reference->count--;
+
+  if (reference->count == 0) JS_FreeValue(reference->context, reference->value);
+
+  if (result != nullptr) {
+    *result = reference->count;
+  }
+
+  return 0;
+}
+
+extern "C" int
+js_get_reference_value (js_env_t *env, js_ref_t *reference, js_value_t **result) {
+  if (reference->count == 0) {
+    *result = nullptr;
+  } else {
+    JS_DupValue(reference->context, reference->value);
+
+    *result = new js_value_t(reference->context, reference->value);
+
+    env->scope->push(*result);
+  }
 
   return 0;
 }
@@ -600,6 +678,8 @@ js_queue_microtask (js_env_t *env, js_task_cb cb, void *data) {
 
 extern "C" int
 js_request_garbage_collection (js_env_t *env) {
+  if (!env->platform->options.expose_garbage_collection) return -1;
+
   JS_RunGC(env->runtime);
 
   return 0;
