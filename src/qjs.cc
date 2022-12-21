@@ -522,10 +522,11 @@ js_get_value_string_utf8 (js_env_t *env, js_value_t *value, char *str, size_t le
   size_t cstr_len;
   const char *cstr = JS_ToCStringLen(env->context, &cstr_len, value->value);
 
-  if (str == nullptr) *result = cstr_len;
-  else {
-    len = std::min(len - 1, cstr_len);
+  len = std::clamp(cstr_len, static_cast<size_t>(0), len - 1);
 
+  if (str == nullptr) {
+    *result = cstr_len;
+  } else if (len != 0) {
     strncpy(str, cstr, len);
 
     str[len] = '\0';
@@ -533,6 +534,8 @@ js_get_value_string_utf8 (js_env_t *env, js_value_t *value, char *str, size_t le
     if (result != nullptr) {
       *result = len;
     }
+  } else if (result != nullptr) {
+    *result = 0;
   }
 
   JS_FreeCString(env->context, cstr);
