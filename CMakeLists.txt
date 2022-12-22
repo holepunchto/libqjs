@@ -6,7 +6,7 @@ if(WIN32)
   set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif()
 
-project(qjs C CXX)
+project(qjs C)
 
 find_library(QUICKJS quickjs PATH_SUFFIXES quickjs REQUIRED)
 find_path(QUICKJS_INCLUDE_DIR quickjs.h PATH_SUFFIXES quickjs)
@@ -25,14 +25,13 @@ set_target_properties(
   qjs
   PROPERTIES
   C_STANDARD 99
-  CXX_STANDARD 17
   POSITION_INDEPENDENT_CODE 1
 )
 
 target_sources(
   qjs
   PRIVATE
-    src/qjs.cc
+    src/qjs.c
 )
 
 target_include_directories(
