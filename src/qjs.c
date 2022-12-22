@@ -99,9 +99,9 @@ struct js_callback_s {
 
 struct js_callback_info_s {
   js_callback_t *callback;
-  js_value_t self;
   int argc;
-  js_value_t *argv[];
+  JSValue *argv;
+  JSValue self;
 };
 
 int
@@ -662,26 +662,17 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
 
   js_env_t *env = callback->env;
 
-  js_callback_info_t *callback_info = malloc(sizeof(js_callback_info_t) + argc * sizeof(js_value_t *));
-
-  callback_info->callback = callback;
-  callback_info->self.context = env->context;
-  callback_info->self.value = self;
-  callback_info->argc = argc;
-
-  for (int i = 0; i < argc; i++) {
-    js_value_t *arg = malloc(sizeof(js_value_t));
-
-    arg->context = env->context;
-    arg->value = argv[i];
-
-    callback_info->argv[i] = arg;
-  }
+  js_callback_info_t callback_info = {
+    .callback = callback,
+    .argc = argc,
+    .argv = argv,
+    .self = self,
+  };
 
   js_handle_scope_t *scope;
   js_open_handle_scope(env, &scope);
 
-  js_value_t *result = callback->cb(env, callback_info);
+  js_value_t *result = callback->cb(env, &callback_info);
 
   JSValue value;
 
@@ -693,12 +684,6 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
   }
 
   js_close_handle_scope(env, scope);
-
-  for (int i = 0; i < argc; i++) {
-    free(callback_info->argv[i]);
-  }
-
-  free(callback_info);
 
   return value;
 }
@@ -733,10 +718,43 @@ js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb 
 
 int
 js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *argc, js_value_t *argv[], js_value_t **self, void **data) {
-  if (argc) *argc = info->argc;
-  if (argv) *argv = *info->argv;
-  if (self) *self = (js_value_t *) &info->self;
-  if (data) *data = info->callback->data;
+  if (argv != NULL) {
+    size_t n = info->argc < *argc ? info->argc : *argc;
+
+    for (size_t i = 0; i < n; i++) {
+      JS_DupValue(env->context, info->argv[i]);
+
+      js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+      wrapper->context = env->context;
+      wrapper->value = info->argv[i];
+
+      argv[i] = wrapper;
+
+      js_attach_to_handle_scope(env, env->scope, wrapper);
+    }
+  }
+
+  if (argc != NULL) {
+    *argc = info->argc;
+  }
+
+  if (self != NULL) {
+    JS_DupValue(env->context, info->self);
+
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->context = env->context;
+    wrapper->value = info->self;
+
+    *self = wrapper;
+
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
+
+  if (data != NULL) {
+    *data = info->callback->data;
+  }
 
   return 0;
 }
