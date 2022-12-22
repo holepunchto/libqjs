@@ -225,9 +225,9 @@ struct js_module_resolver_s {
 
 struct js_module_evaluator_s {
   js_synthetic_module_t *module;
-  js_synethic_module_cb cb;
+  js_synthetic_module_cb cb;
 
-  js_module_evaluator_s(js_synthetic_module_t *module, js_synethic_module_cb cb)
+  js_module_evaluator_s(js_synthetic_module_t *module, js_synthetic_module_cb cb)
       : module(module),
         cb(cb) {}
 };
@@ -503,7 +503,7 @@ on_evaluate_module (JSContext *context, JSModuleDef *definition) {
 }
 
 extern "C" int
-js_create_synthetic_module (js_env_t *env, const char *name, size_t len, const js_value_t *export_names[], size_t names_len, js_synethic_module_cb cb, void *data, js_module_t **result) {
+js_create_synthetic_module (js_env_t *env, const char *name, size_t len, const js_value_t *export_names[], size_t names_len, js_synthetic_module_cb cb, void *data, js_module_t **result) {
   auto definition = JS_NewCModule(env->context, name, on_evaluate_module);
 
   auto module = new js_synthetic_module_t(env->context, data, definition);
