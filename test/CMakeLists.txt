@@ -3,6 +3,7 @@ list(APPEND tests
   create-reference
   create-reference-weak
   run-microtask
+  run-module
   run-script
   set-named-property
 )

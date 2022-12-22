@@ -1,4 +1,6 @@
+#include <map>
 #include <queue>
+#include <stack>
 #include <vector>
 
 #include <js.h>
@@ -7,6 +9,15 @@
 
 typedef struct js_task_s js_task_t;
 typedef struct js_callback_s js_callback_t;
+typedef struct js_source_text_module_s js_source_text_module_t;
+typedef struct js_synthetic_module_s js_synthetic_module_t;
+typedef struct js_module_resolver_s js_module_resolver_t;
+typedef struct js_module_evaluator_s js_module_evaluator_t;
+
+typedef enum {
+  js_source_text_module,
+  js_synthetic_module
+} js_module_type_t;
 
 struct js_task_s {
   js_env_t *env;
@@ -41,6 +52,8 @@ struct js_env_s {
   js_handle_scope_t *scope;
   JSRuntime *runtime;
   JSContext *context;
+  std::stack<js_module_resolver_t *> resolvers;
+  std::map<uintptr_t, js_module_evaluator_t *> evaluators;
 
   js_env_s(uv_loop_t *loop, js_platform_t *platform, JSRuntime *runtime, JSContext *context)
       : loop(loop),
@@ -49,7 +62,8 @@ struct js_env_s {
         platform(platform),
         scope(),
         runtime(runtime),
-        context(context) {
+        context(context),
+        resolvers() {
     JS_SetRuntimeOpaque(runtime, this);
     JS_SetContextOpaque(context, this);
 
@@ -173,6 +187,51 @@ struct js_escapable_handle_scope_s : public js_handle_scope_s {
         escaped(false) {}
 };
 
+struct js_module_s {
+  js_module_type_t type;
+  JSContext *context;
+  void *data;
+
+  js_module_s(js_module_type_t type, JSContext *context, void *data)
+      : type(type),
+        context(context),
+        data(data) {}
+};
+
+struct js_source_text_module_s : js_module_t {
+  JSValue bytecode;
+
+  js_source_text_module_s(JSContext *context, void *data, JSValue bytecode = JS_NULL)
+      : js_module_t(js_source_text_module, context, data),
+        bytecode(bytecode) {}
+};
+
+struct js_synthetic_module_s : js_module_t {
+  JSModuleDef *definition;
+
+  js_synthetic_module_s(JSContext *context, void *data, JSModuleDef *definition)
+      : js_module_t(js_synthetic_module, context, data),
+        definition(definition) {}
+};
+
+struct js_module_resolver_s {
+  js_source_text_module_t *module;
+  js_module_cb cb;
+
+  js_module_resolver_s(js_source_text_module_t *module, js_module_cb cb)
+      : module(module),
+        cb(cb) {}
+};
+
+struct js_module_evaluator_s {
+  js_synthetic_module_t *module;
+  js_synethic_module_cb cb;
+
+  js_module_evaluator_s(js_synthetic_module_t *module, js_synethic_module_cb cb)
+      : module(module),
+        cb(cb) {}
+};
+
 struct js_ref_s {
   JSContext *context;
   JSValue value;
@@ -234,6 +293,50 @@ js_get_platform_loop (js_platform_t *platform, uv_loop_t **result) {
   return 0;
 }
 
+static JSModuleDef *
+on_resolve_module (JSContext *context, const char *name, void *opaque) {
+  auto env = reinterpret_cast<js_env_t *>(JS_GetContextOpaque(context));
+
+  auto resolver = env->resolvers.top();
+
+  js_handle_scope_t *scope;
+  js_open_handle_scope(env, &scope);
+
+  auto specifier = new js_value_t(context, JS_NewString(context, name));
+
+  env->scope->push(specifier);
+
+  auto assertions = new js_value_t(context, JS_NULL);
+
+  env->scope->push(assertions);
+
+  auto referrer = resolver->module;
+
+  auto module = resolver->cb(
+    env,
+    specifier,
+    assertions,
+    referrer,
+    referrer->data
+  );
+
+  js_close_handle_scope(env, scope);
+
+  switch (module->type) {
+  case js_source_text_module: {
+    auto bytecode = reinterpret_cast<js_source_text_module_t *>(module)->bytecode;
+
+    return reinterpret_cast<JSModuleDef *>(JS_VALUE_GET_PTR(bytecode));
+  }
+
+  case js_synthetic_module: {
+    auto definition = reinterpret_cast<js_synthetic_module_t *>(module)->definition;
+
+    return definition;
+  }
+  }
+}
+
 extern "C" int
 js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   auto runtime = JS_NewRuntime();
@@ -251,6 +354,8 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   JS_AddIntrinsicTypedArrays(context);
   JS_AddIntrinsicPromise(context);
   JS_AddIntrinsicBigInt(context);
+
+  JS_SetModuleLoaderFunc(runtime, nullptr, on_resolve_module, nullptr);
 
   auto env = new js_env_t(loop, platform, runtime, context);
 
@@ -352,6 +457,107 @@ js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
   *result = new js_value_t(env->context, value);
 
   env->scope->push(*result);
+
+  return 0;
+}
+
+extern "C" int
+js_create_module (js_env_t *env, const char *name, size_t len, js_value_t *source, js_module_cb cb, void *data, js_module_t **result) {
+  auto module = new js_source_text_module_t(env->context, data);
+
+  auto resolver = js_module_resolver_t(module, cb);
+
+  env->resolvers.push(&resolver);
+
+  size_t str_len;
+  const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
+
+  module->bytecode = JS_Eval(
+    env->context,
+    str,
+    str_len,
+    name,
+    JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
+  );
+
+  JS_FreeCString(env->context, str);
+
+  env->resolvers.pop();
+
+  *result = module;
+
+  return 0;
+}
+
+static int
+on_evaluate_module (JSContext *context, JSModuleDef *definition) {
+  auto env = reinterpret_cast<js_env_t *>(JS_GetContextOpaque(context));
+
+  auto evaluator = env->evaluators.at(reinterpret_cast<uintptr_t>(definition));
+
+  auto module = evaluator->module;
+
+  evaluator->cb(env, module, module->data);
+
+  return 0;
+}
+
+extern "C" int
+js_create_synthetic_module (js_env_t *env, const char *name, size_t len, const js_value_t *export_names[], size_t names_len, js_synethic_module_cb cb, void *data, js_module_t **result) {
+  auto definition = JS_NewCModule(env->context, name, on_evaluate_module);
+
+  auto module = new js_synthetic_module_t(env->context, data, definition);
+
+  for (size_t i = 0; i < names_len; i++) {
+    auto export_name = export_names[i];
+
+    const char *str = JS_ToCString(env->context, export_name->value);
+
+    JS_AddModuleExport(env->context, definition, str);
+
+    JS_FreeCString(env->context, str);
+  }
+
+  auto evaluator = new js_module_evaluator_t(module, cb);
+
+  env->evaluators.emplace(reinterpret_cast<uintptr_t>(definition), evaluator);
+
+  *result = module;
+
+  return 0;
+}
+
+extern "C" int
+js_delete_module (js_env_t *env, js_module_t *module) {
+  delete module;
+
+  return 0;
+}
+
+extern "C" int
+js_set_module_export (js_env_t *env, js_module_t *module, js_value_t *name, js_value_t *value) {
+  if (module->type != js_synthetic_module) return -1;
+
+  auto definition = reinterpret_cast<js_synthetic_module_t *>(module)->definition;
+
+  const char *str = JS_ToCString(env->context, name->value);
+
+  JS_DupValue(env->context, value->value);
+
+  JS_SetModuleExport(env->context, definition, str, value->value);
+
+  JS_FreeCString(env->context, str);
+
+  return 0;
+}
+
+extern "C" int
+js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
+  if (module->type != js_source_text_module) return -1;
+
+  auto bytecode = reinterpret_cast<js_source_text_module_t *>(module)->bytecode;
+
+  *result = new js_value_t(env->context, JS_EvalFunction(env->context, bytecode));
 
   return 0;
 }
