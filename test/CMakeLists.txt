@@ -1,4 +1,6 @@
 list(APPEND tests
+  create-external
+  create-external-with-finalizer
   create-function
   create-reference
   create-reference-weak

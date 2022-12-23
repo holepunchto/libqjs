@@ -767,8 +767,6 @@ js_create_external (js_env_t *env, void *data, js_finalize_cb finalize_cb, void 
   wrapper->context = env->context;
   wrapper->value = value;
 
-  JS_FreeValue(env->context, value);
-
   *result = wrapper;
 
   js_attach_to_handle_scope(env, env->scope, wrapper);
