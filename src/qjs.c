@@ -1077,11 +1077,19 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
     args[i] = argv[i]->value;
   }
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
-
-  wrapper->value = JS_Call(env->context, fn->value, recv->value, argc, args);
+  JSValue value = JS_Call(env->context, fn->value, recv->value, argc, args);
 
   free(args);
+
+  if (JS_IsException(value)) {
+    JS_FreeValue(env->context, value); // TODO: Expose this
+
+    return -1;
+  }
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = value;
 
   *result = wrapper;
 
@@ -1131,6 +1139,30 @@ js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *arg
   return 0;
 }
 
+int
+js_get_arraybuffer_info (js_env_t *env, js_value_t *arraybuffer, void **data, size_t *len) {
+  return -1;
+}
+
+int
+js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_type_t *type, size_t *len, void **data, js_value_t **arraybuffer, size_t *offset) {
+  return -1;
+}
+
+int
+js_get_dataview_info (js_env_t *env, js_value_t *dataview, size_t *len, void **data, js_value_t **arraybuffer, size_t *offset) {
+  return -1;
+}
+
+int
+js_throw (js_env_t *env, js_value_t *error) {
+  JSValue result = JS_Throw(env->context, error->value);
+
+  JS_FreeValue(env->context, result);
+
+  return 0;
+}
+
 static JSValue
 on_job (JSContext *context, int argc, JSValueConst *argv) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
@@ -1159,6 +1191,11 @@ js_queue_microtask (js_env_t *env, js_task_cb cb, void *data) {
   JS_FreeValue(env->context, external);
 
   return 0;
+}
+
+int
+js_queue_macrotask (js_env_t *env, js_task_cb cb, void *data, uint64_t delay) {
+  return -1;
 }
 
 int
