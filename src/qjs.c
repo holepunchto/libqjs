@@ -7,6 +7,7 @@
 
 typedef struct js_task_s js_task_t;
 typedef struct js_callback_s js_callback_t;
+typedef struct js_external_s js_external_t;
 typedef struct js_source_text_module_s js_source_text_module_t;
 typedef struct js_synthetic_module_s js_synthetic_module_t;
 typedef struct js_module_resolver_s js_module_resolver_t;
@@ -91,6 +92,13 @@ struct js_ref_s {
   uint32_t count;
 };
 
+struct js_external_s {
+  js_env_t *env;
+  void *data;
+  js_finalize_cb finalize_cb;
+  void *finalize_hint;
+};
+
 struct js_callback_s {
   js_env_t *env;
   js_function_cb cb;
@@ -104,8 +112,26 @@ struct js_callback_info_s {
   JSValue self;
 };
 
+static JSClassID js_job_data_class_id;
+static JSClassID js_function_data_class_id;
+static JSClassID js_external_data_class_id;
+
+static uv_once_t js_platform_init = UV_ONCE_INIT;
+
+static void
+on_platform_init () {
+  // Class IDs are globally allocated, so we guard their initialization with a
+  // `uv_once_t`.
+
+  JS_NewClassID(&js_job_data_class_id);
+  JS_NewClassID(&js_function_data_class_id);
+  JS_NewClassID(&js_external_data_class_id);
+}
+
 int
 js_create_platform (uv_loop_t *loop, const js_platform_options_t *options, js_platform_t **result) {
+  uv_once(&js_platform_init, on_platform_init);
+
   js_platform_t *platform = malloc(sizeof(js_platform_t));
 
   platform->loop = loop;
@@ -173,6 +199,17 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
 }
 
 static void
+on_external_finalize (JSRuntime *runtime, JSValue value) {
+  js_external_t *external = (js_external_t *) JS_GetOpaque(value, js_external_data_class_id);
+
+  if (external->finalize_cb) {
+    external->finalize_cb(external->env, external->data, external->finalize_hint);
+  }
+
+  free(external);
+}
+
+static void
 on_prepare (uv_prepare_t *handle);
 
 static inline void
@@ -231,6 +268,13 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   JS_AddIntrinsicBigInt(context);
 
   JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
+
+  JSClassDef external_class = {
+    .class_name = "External",
+    .finalizer = on_external_finalize,
+  };
+
+  JS_NewClass(runtime, js_external_data_class_id, &external_class);
 
   js_env_t *env = malloc(sizeof(js_env_t));
 
@@ -647,15 +691,6 @@ js_create_object (js_env_t *env, js_value_t **result) {
   return 0;
 }
 
-static JSClassID js_function_data_class_id;
-
-static uv_once_t js_function_init = UV_ONCE_INIT;
-
-static void
-on_function_init () {
-  JS_NewClassID(&js_function_data_class_id);
-}
-
 static JSValue
 on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst *argv, int magic, JSValue *data) {
   js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_function_data_class_id);
@@ -690,8 +725,6 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
 
 int
 js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb cb, void *data, js_value_t **result) {
-  uv_once(&js_function_init, on_function_init);
-
   js_callback_t *callback = malloc(sizeof(js_callback_t));
 
   callback->env = env;
@@ -708,6 +741,33 @@ js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb 
   wrapper->value = JS_NewCFunctionData(env->context, on_function_call, 0, 0, 1, &external);
 
   JS_FreeValue(env->context, external);
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_create_external (js_env_t *env, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
+  js_external_t *external = malloc(sizeof(js_external_t));
+
+  external->env = env;
+  external->data = data;
+  external->finalize_cb = finalize_cb;
+  external->finalize_hint = finalize_hint;
+
+  JSValue value = JS_NewObjectClass(env->context, js_external_data_class_id);
+
+  JS_SetOpaque(value, external);
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->context = env->context;
+  wrapper->value = value;
+
+  JS_FreeValue(env->context, value);
 
   *result = wrapper;
 
@@ -856,6 +916,15 @@ js_get_value_string_utf8 (js_env_t *env, js_value_t *value, char *str, size_t le
 }
 
 int
+js_get_value_external (js_env_t *env, js_value_t *value, void **result) {
+  js_external_t *external = (js_external_t *) JS_GetOpaque(value->value, js_external_data_class_id);
+
+  *result = external->data;
+
+  return 0;
+}
+
+int
 js_get_named_property (js_env_t *env, js_value_t *object, const char *name, js_value_t **result) {
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -878,15 +947,6 @@ js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
   return 0;
 }
 
-static JSClassID js_job_data_class_id;
-
-static uv_once_t js_job_init = UV_ONCE_INIT;
-
-static void
-on_job_init () {
-  JS_NewClassID(&js_job_data_class_id);
-}
-
 static JSValue
 on_job (JSContext *context, int argc, JSValueConst *argv) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
@@ -900,8 +960,6 @@ on_job (JSContext *context, int argc, JSValueConst *argv) {
 
 int
 js_queue_microtask (js_env_t *env, js_task_cb cb, void *data) {
-  uv_once(&js_job_init, on_job_init);
-
   js_task_t *task = malloc(sizeof(js_task_t));
 
   task->env = env;
