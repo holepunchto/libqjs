@@ -1,4 +1,5 @@
 list(APPEND tests
+  call-function
   create-external
   create-external-with-finalizer
   create-function
