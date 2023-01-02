@@ -1,5 +1,6 @@
 #include <js.h>
 #include <quickjs.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -249,6 +250,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   JS_AddIntrinsicPromise(context);
   JS_AddIntrinsicBigInt(context);
 
+  JS_SetCanBlock(runtime, false);
   JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
 
   JSClassDef external_class = {
