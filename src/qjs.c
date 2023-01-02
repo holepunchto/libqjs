@@ -470,7 +470,7 @@ on_evaluate_module (JSContext *context, JSModuleDef *definition) {
 }
 
 int
-js_create_synthetic_module (js_env_t *env, const char *name, size_t len, const js_value_t *export_names[], size_t names_len, js_synthetic_module_cb cb, void *data, js_module_t **result) {
+js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_value_t *const export_names[], size_t names_len, js_synthetic_module_cb cb, void *data, js_module_t **result) {
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = env->context;
@@ -1072,7 +1072,7 @@ js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
 }
 
 int
-js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, const js_value_t *argv[], js_value_t **result) {
+js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, js_value_t *const argv[], js_value_t **result) {
   JSValue *args = malloc(argc * sizeof(JSValue));
 
   for (size_t i = 0; i < argc; i++) {
@@ -1101,7 +1101,7 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
 }
 
 int
-js_make_callback (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, const js_value_t *argv[], js_value_t **result) {
+js_make_callback (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, js_value_t *const argv[], js_value_t **result) {
   int err = js_call_function(env, recv, fn, argc, argv, result);
 
   run_microtasks(env);
