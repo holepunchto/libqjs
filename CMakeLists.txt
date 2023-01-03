@@ -68,7 +68,7 @@ set_target_properties(
 target_link_libraries(
   qjs_static
   PUBLIC
-    uv
+    uv_a
     ${QUICKJS}
 )
 
