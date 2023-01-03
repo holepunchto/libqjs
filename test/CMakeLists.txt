@@ -4,12 +4,15 @@ list(APPEND tests
   create-external
   create-external-with-finalizer
   create-function
+  create-function-throw
+  create-function-throw-indirect
   create-reference
   create-reference-weak
   run-microtask
   run-microtask-throw
   run-module
   run-script
+  run-script-throw
   set-named-property
 )
 

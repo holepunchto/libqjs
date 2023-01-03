@@ -35,6 +35,8 @@ struct js_env_s {
   JSContext *context;
   js_module_resolver_t *resolvers;
   js_module_evaluator_t *evaluators;
+  js_uncaught_exception_cb on_uncaught_exception;
+  void *uncaught_exception_data;
 };
 
 struct js_value_s {
@@ -73,7 +75,6 @@ struct js_module_evaluator_s {
 };
 
 struct js_ref_s {
-  JSContext *context;
   JSValue value;
   uint32_t count;
 };
@@ -193,6 +194,23 @@ on_external_finalize (JSRuntime *runtime, JSValue value) {
 }
 
 static void
+on_uncaught_exception (JSContext *context, JSValue error) {
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
+
+  if (env->on_uncaught_exception == NULL) return;
+
+  js_value_t wrapper;
+  wrapper.value = error;
+
+  js_handle_scope_t *scope;
+  js_open_handle_scope(env, &scope);
+
+  env->on_uncaught_exception(env, &wrapper, env->uncaught_exception_data);
+
+  js_close_handle_scope(env, scope);
+}
+
+static void
 on_prepare (uv_prepare_t *handle);
 
 static inline void
@@ -202,6 +220,12 @@ run_microtasks (js_env_t *env) {
   for (;;) {
     int err = JS_ExecutePendingJob(env->runtime, &context);
     if (err <= 0) break;
+
+    JSValue error = JS_GetException(context);
+
+    if (JS_IsNull(error)) continue;
+
+    on_uncaught_exception(context, error);
   }
 }
 
@@ -303,6 +327,14 @@ js_destroy_env (js_env_t *env) {
 }
 
 int
+js_on_uncaught_exception (js_env_t *env, js_uncaught_exception_cb cb, void *data) {
+  env->on_uncaught_exception = cb;
+  env->uncaught_exception_data = data;
+
+  return 0;
+}
+
+int
 js_get_env_loop (js_env_t *env, uv_loop_t **result) {
   *result = env->loop;
 
@@ -327,8 +359,6 @@ js_open_handle_scope (js_env_t *env, js_handle_scope_t **result) {
 
 int
 js_close_handle_scope (js_env_t *env, js_handle_scope_t *scope) {
-  if (env->scope != scope) return -1;
-
   for (size_t i = 0; i < scope->len; i++) {
     js_value_t *value = scope->values[i];
 
@@ -380,15 +410,17 @@ js_close_escapable_handle_scope (js_env_t *env, js_escapable_handle_scope_t *sco
 
 int
 js_escape_handle (js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t *escapee, js_value_t **result) {
-  if (scope->escaped) return -1;
+  if (scope->escaped) {
+    JS_ThrowInternalError(env->context, "Scope has already been escaped");
+
+    return -1;
+  }
 
   scope->escaped = true;
 
-  JS_DupValue(env->context, escapee->value);
-
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  wrapper->value = escapee->value;
+  wrapper->value = JS_DupValue(env->context, escapee->value);
 
   *result = wrapper;
 
@@ -402,11 +434,15 @@ js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
   size_t str_len;
   const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
-
-  wrapper->value = JS_Eval(env->context, str, str_len, "<anonymous>", JS_EVAL_TYPE_GLOBAL);
+  JSValue value = JS_Eval(env->context, str, str_len, "<anonymous>", JS_EVAL_TYPE_GLOBAL);
 
   JS_FreeCString(env->context, str);
+
+  if (JS_IsException(value)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = value;
 
   *result = wrapper;
 
@@ -509,9 +545,7 @@ int
 js_set_module_export (js_env_t *env, js_module_t *module, js_value_t *name, js_value_t *value) {
   const char *str = JS_ToCString(env->context, name->value);
 
-  JS_DupValue(env->context, value->value);
-
-  JS_SetModuleExport(env->context, module->definition, str, value->value);
+  JS_SetModuleExport(env->context, module->definition, str, JS_DupValue(env->context, value->value));
 
   JS_FreeCString(env->context, str);
 
@@ -531,15 +565,24 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
   return 0;
 }
 
+static inline void
+js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
+  // TODO: Attach symbol with finalizer
+}
+
+static inline void
+js_clear_weak_reference (js_env_t *env, js_ref_t *reference) {
+  // TODO: Detach symbol with finalizer
+}
+
 int
 js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t **result) {
   js_ref_t *reference = malloc(sizeof(js_ref_t));
 
-  reference->context = env->context;
-  reference->value = value->value;
+  reference->value = JS_DupValue(env->context, value->value);
   reference->count = count;
 
-  if (reference->count > 0) JS_DupValue(reference->context, reference->value);
+  if (reference->count == 0) js_set_weak_reference(env, reference);
 
   *result = reference;
 
@@ -548,7 +591,7 @@ js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t 
 
 int
 js_delete_reference (js_env_t *env, js_ref_t *reference) {
-  if (reference->count > 0) JS_FreeValue(reference->context, reference->value);
+  JS_FreeValue(env->context, reference->value);
 
   free(reference);
 
@@ -557,9 +600,9 @@ js_delete_reference (js_env_t *env, js_ref_t *reference) {
 
 int
 js_reference_ref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
-  if (reference->count == 0) return -1;
-
   reference->count++;
+
+  if (reference->count == 1) js_clear_weak_reference(env, reference);
 
   if (result != NULL) {
     *result = reference->count;
@@ -570,11 +613,15 @@ js_reference_ref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
 
 int
 js_reference_unref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
-  if (reference->count == 0) return -1;
+  if (reference->count == 0) {
+    JS_ThrowInternalError(env->context, "Cannot decrease reference count");
+
+    return -1;
+  }
 
   reference->count--;
 
-  if (reference->count == 0) JS_FreeValue(reference->context, reference->value);
+  if (reference->count == 0) js_set_weak_reference(env, reference);
 
   if (result != NULL) {
     *result = reference->count;
@@ -585,14 +632,12 @@ js_reference_unref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
 
 int
 js_get_reference_value (js_env_t *env, js_ref_t *reference, js_value_t **result) {
-  if (reference->count == 0) {
+  if (JS_IsNull(reference->value)) {
     *result = NULL;
   } else {
-    JS_DupValue(reference->context, reference->value);
-
     js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-    wrapper->value = reference->value;
+    wrapper->value = JS_DupValue(env->context, reference->value);
 
     *result = wrapper;
 
@@ -676,13 +721,17 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
 
   js_value_t *result = callback->cb(env, &callback_info);
 
-  JSValue value;
+  JSValue value, error;
 
   if (result == NULL) value = JS_UNDEFINED;
-  else {
-    value = result->value;
+  else value = JS_DupValue(env->context, result->value);
 
-    JS_DupValue(env->context, value);
+  error = JS_GetException(env->context);
+
+  if (!JS_IsNull(error)) {
+    JS_FreeValue(env->context, value);
+
+    value = JS_Throw(env->context, JS_DupValue(env->context, error));
   }
 
   js_close_handle_scope(env, scope);
@@ -800,6 +849,27 @@ js_get_promise_state (js_env_t *env, js_value_t *promise, js_promise_state_t *re
 int
 js_get_promise_result (js_env_t *env, js_value_t *promise, js_value_t **result) {
   return -1;
+}
+
+int
+js_create_error (js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
+  JSValue error = JS_NewError(env->context);
+
+  JS_SetPropertyStr(env->context, error, "message", JS_DupValue(env->context, message->value));
+
+  if (code != NULL) {
+    JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
+  }
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = error;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
 }
 
 int
@@ -925,7 +995,9 @@ js_is_date (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_error (js_env_t *env, js_value_t *value, bool *result) {
-  return -1;
+  *result = JS_IsError(env->context, value->value);
+
+  return 0;
 }
 
 int
@@ -1064,9 +1136,7 @@ js_get_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
 
 int
 js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_value_t *value) {
-  JS_DupValue(env->context, value->value);
-
-  JS_SetPropertyStr(env->context, object->value, name, value->value);
+  JS_SetPropertyStr(env->context, object->value, name, JS_DupValue(env->context, value->value));
 
   return 0;
 }
@@ -1083,11 +1153,7 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
 
   free(args);
 
-  if (JS_IsException(value)) {
-    JS_FreeValue(env->context, value); // TODO: Expose this
-
-    return -1;
-  }
+  if (JS_IsException(value)) return -1;
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -1115,11 +1181,9 @@ js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *arg
     size_t n = info->argc < *argc ? info->argc : *argc;
 
     for (size_t i = 0; i < n; i++) {
-      JS_DupValue(env->context, info->argv[i]);
-
       js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-      wrapper->value = info->argv[i];
+      wrapper->value = JS_DupValue(env->context, info->argv[i]);
 
       argv[i] = wrapper;
 
@@ -1132,11 +1196,9 @@ js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *arg
   }
 
   if (self != NULL) {
-    JS_DupValue(env->context, info->self);
-
     js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-    wrapper->value = info->self;
+    wrapper->value = JS_DupValue(env->context, info->self);
 
     *self = wrapper;
 
@@ -1167,11 +1229,60 @@ js_get_dataview_info (js_env_t *env, js_value_t *dataview, size_t *len, void **d
 
 int
 js_throw (js_env_t *env, js_value_t *error) {
-  JSValue result = JS_Throw(env->context, error->value);
-
-  JS_FreeValue(env->context, result);
+  JS_Throw(env->context, error->value);
 
   return 0;
+}
+
+int
+js_throw_error (js_env_t *env, const char *code, const char *message) {
+  JSValue error = JS_NewError(env->context);
+
+  JS_SetPropertyStr(env->context, error, "message", JS_NewString(env->context, message));
+
+  if (code != NULL) {
+    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+  }
+
+  JS_Throw(env->context, error);
+
+  return 0;
+}
+
+int
+js_is_exception_pending (js_env_t *env, bool *result) {
+  JSValue error = JS_GetException(env->context);
+
+  if (JS_IsNull(error)) *result = false;
+  else {
+    JS_Throw(env->context, error);
+
+    *result = true;
+  }
+
+  return 0;
+}
+
+int
+js_get_and_clear_last_exception (js_env_t *env, js_value_t **result) {
+  JSValue error = JS_GetException(env->context);
+
+  if (JS_IsNull(error)) return js_get_undefined(env, result);
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = error;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_fatal_exception (js_env_t *env, js_value_t *error) {
+  return -1;
 }
 
 static JSValue
@@ -1211,7 +1322,11 @@ js_queue_macrotask (js_env_t *env, js_task_cb cb, void *data, uint64_t delay) {
 
 int
 js_request_garbage_collection (js_env_t *env) {
-  if (!env->platform->options.expose_garbage_collection) return -1;
+  if (!env->platform->options.expose_garbage_collection) {
+    JS_ThrowInternalError(env->context, "Garbage collection is unavailable");
+
+    return -1;
+  }
 
   JS_RunGC(env->runtime);
 
