@@ -1178,9 +1178,9 @@ js_make_callback (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
 int
 js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *argc, js_value_t *argv[], js_value_t **self, void **data) {
   if (argv != NULL) {
-    size_t n = info->argc < *argc ? info->argc : *argc;
+    size_t i = 0, n = info->argc < *argc ? info->argc : *argc;
 
-    for (size_t i = 0; i < n; i++) {
+    for (; i < n; i++) {
       js_value_t *wrapper = malloc(sizeof(js_value_t));
 
       wrapper->value = JS_DupValue(env->context, info->argv[i]);
@@ -1188,6 +1188,20 @@ js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *arg
       argv[i] = wrapper;
 
       js_attach_to_handle_scope(env, env->scope, wrapper);
+    }
+
+    n = *argc;
+
+    if (i < n) {
+      js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+      wrapper->value = JS_UNDEFINED;
+
+      js_attach_to_handle_scope(env, env->scope, wrapper);
+
+      for (; i < n; i++) {
+        argv[i] = wrapper;
+      }
     }
   }
 
