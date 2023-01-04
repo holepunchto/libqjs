@@ -1,5 +1,6 @@
 list(APPEND tests
   call-function
+  call-function-ignore-return
   call-function-throw
   create-external
   create-external-with-finalizer
@@ -10,6 +11,10 @@ list(APPEND tests
   create-function-throw-indirect
   create-reference
   create-reference-weak
+  fatal-exception
+  get-arraybuffer-info
+  get-typedarray-info-uint8array
+  get-typedarray-info-uint16array
   run-microtask
   run-microtask-throw
   run-module

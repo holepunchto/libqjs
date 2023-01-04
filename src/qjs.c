@@ -911,7 +911,15 @@ js_is_array (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_arraybuffer (js_env_t *env, js_value_t *value, bool *result) {
-  return -1;
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "ArrayBuffer");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
 }
 
 int
@@ -990,7 +998,15 @@ js_is_object (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_date (js_env_t *env, js_value_t *value, bool *result) {
-  return -1;
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Date");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
 }
 
 int
@@ -1002,17 +1018,69 @@ js_is_error (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_typedarray (js_env_t *env, js_value_t *value, bool *result) {
-  return -1;
+  JSValue global = JS_GetGlobalObject(env->context);
+
+#define check_type(class) \
+  { \
+    JSValue constructor = JS_GetPropertyStr(env->context, global, class); \
+\
+    if (JS_IsInstanceOf(env->context, value->value, constructor)) { \
+      *result = true; \
+\
+      JS_FreeValue(env->context, constructor); \
+\
+      goto done; \
+    } \
+\
+    JS_FreeValue(env->context, constructor); \
+  }
+
+  check_type("Int8Array");
+  check_type("Uint8Array");
+  check_type("Uint8ClampedArray");
+  check_type("Int16Array");
+  check_type("Uint16Array");
+  check_type("Int32Array");
+  check_type("Uint32Array");
+  check_type("Float32Array");
+  check_type("Float64Array");
+  check_type("BigInt64Array");
+  check_type("BigUint64Array");
+
+#undef check_type
+
+  *result = false;
+
+done:
+  JS_FreeValue(env->context, global);
+
+  return 0;
 }
 
 int
 js_is_dataview (js_env_t *env, js_value_t *value, bool *result) {
-  return -1;
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "DataView");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
 }
 
 int
 js_is_promise (js_env_t *env, js_value_t *value, bool *result) {
-  return -1;
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Promise");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
 }
 
 int
@@ -1155,13 +1223,16 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
 
   if (JS_IsException(value)) return -1;
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  if (result == NULL) JS_FreeValue(env->context, value);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  wrapper->value = value;
+    wrapper->value = value;
 
-  *result = wrapper;
+    *result = wrapper;
 
-  js_attach_to_handle_scope(env, env->scope, wrapper);
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
 
   return 0;
 }
@@ -1227,17 +1298,99 @@ js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *arg
 }
 
 int
-js_get_arraybuffer_info (js_env_t *env, js_value_t *arraybuffer, void **data, size_t *len) {
-  return -1;
+js_get_arraybuffer_info (js_env_t *env, js_value_t *arraybuffer, void **pdata, size_t *plen) {
+  size_t len;
+
+  uint8_t *data = JS_GetArrayBuffer(env->context, &len, arraybuffer->value);
+
+  if (pdata != NULL) {
+    *pdata = data;
+  }
+
+  if (plen != NULL) {
+    *plen = len;
+  }
+
+  return 0;
 }
 
 int
-js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_type_t *type, size_t *len, void **data, js_value_t **arraybuffer, size_t *offset) {
-  return -1;
+js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_type_t *ptype, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
+  size_t len, offset, byte_len, bytes_per_element;
+
+  JSValue arraybuffer = JS_GetTypedArrayBuffer(env->context, typedarray->value, &offset, &byte_len, &bytes_per_element);
+
+  if (ptype != NULL) {
+    JSValue global = JS_GetGlobalObject(env->context);
+
+#define check_type(class, type) \
+  { \
+    JSValue constructor = JS_GetPropertyStr(env->context, global, class); \
+\
+    if (JS_IsInstanceOf(env->context, typedarray->value, constructor)) { \
+      *ptype = type; \
+\
+      JS_FreeValue(env->context, constructor); \
+\
+      goto done; \
+    } \
+\
+    JS_FreeValue(env->context, constructor); \
+  }
+
+    check_type("Int8Array", js_int8_array);
+    check_type("Uint8Array", js_uint8_array);
+    check_type("Uint8ClampedArray", js_uint8_clamped_array);
+    check_type("Int16Array", js_int16_array);
+    check_type("Uint16Array", js_uint16_array);
+    check_type("Int32Array", js_int32_array);
+    check_type("Uint32Array", js_uint32_array);
+    check_type("Float32Array", js_float32_array);
+    check_type("Float64Array", js_float64_array);
+    check_type("BigInt64Array", js_bigint64_array);
+    check_type("BigUint64Array", js_biguint64_array);
+
+#undef check_type
+
+  done:
+    JS_FreeValue(env->context, global);
+  }
+
+  uint8_t *data;
+
+  if (pdata != NULL || parraybuffer != NULL) {
+    data = JS_GetArrayBuffer(env->context, &len, arraybuffer);
+  }
+
+  if (pdata != NULL) {
+    *pdata = data;
+  }
+
+  if (plen != NULL) {
+    *plen = byte_len / bytes_per_element;
+  }
+
+  if (parraybuffer != NULL) {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = JS_DupValue(env->context, arraybuffer);
+
+    *parraybuffer = wrapper;
+
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
+
+  if (poffset != NULL) {
+    *poffset = offset;
+  }
+
+  JS_FreeValue(env->context, arraybuffer);
+
+  return 0;
 }
 
 int
-js_get_dataview_info (js_env_t *env, js_value_t *dataview, size_t *len, void **data, js_value_t **arraybuffer, size_t *offset) {
+js_get_dataview_info (js_env_t *env, js_value_t *dataview, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
   return -1;
 }
 
@@ -1296,7 +1449,9 @@ js_get_and_clear_last_exception (js_env_t *env, js_value_t **result) {
 
 int
 js_fatal_exception (js_env_t *env, js_value_t *error) {
-  return -1;
+  on_uncaught_exception(env->context, error->value);
+
+  return 0;
 }
 
 static JSValue
