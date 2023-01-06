@@ -104,6 +104,10 @@ struct js_callback_info_s {
   JSValue self;
 };
 
+const char *js_platform_identifier = "quickjs";
+
+const char *js_platform_version = NULL;
+
 static JSClassID js_job_data_class_id;
 static JSClassID js_function_data_class_id;
 static JSClassID js_external_data_class_id;
