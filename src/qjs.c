@@ -281,6 +281,17 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   JS_SetCanBlock(runtime, false);
   JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
 
+  uint64_t constrained_memory = uv_get_constrained_memory();
+  uint64_t total_memory = uv_get_total_memory();
+
+  if (constrained_memory > 0 && constrained_memory < total_memory) {
+    total_memory = constrained_memory;
+  }
+
+  if (total_memory > 0) {
+    JS_SetMemoryLimit(runtime, total_memory);
+  }
+
   JSClassDef external_class = {
     .class_name = "External",
     .finalizer = on_external_finalize,
