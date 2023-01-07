@@ -8,8 +8,17 @@ endif()
 
 project(qjs C)
 
-find_library(QUICKJS quickjs PATH_SUFFIXES quickjs REQUIRED)
-find_path(QUICKJS_INCLUDE_DIR quickjs.h PATH_SUFFIXES quickjs)
+if(NOT DEFINED QUICKJS)
+  execute_process(
+    COMMAND quickjs-prebuilds-paths --lib
+    OUTPUT_VARIABLE QUICKJS
+  )
+
+  execute_process(
+    COMMAND quickjs-prebuilds-paths --include
+    OUTPUT_VARIABLE QUICKJS_INCLUDE_DIR
+  )
+endif()
 
 if(NOT TARGET uv)
   add_subdirectory(vendor/libuv EXCLUDE_FROM_ALL)
