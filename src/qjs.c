@@ -1,8 +1,10 @@
 #include <js.h>
 #include <quickjs.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <uv.h>
 
@@ -426,7 +428,7 @@ js_attach_to_handle_scope (js_env_t *env, js_handle_scope_t *scope, js_value_t *
 int
 js_escape_handle (js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t *escapee, js_value_t **result) {
   if (scope->escaped) {
-    JS_ThrowInternalError(env->context, "Scope has already been escaped");
+    js_throw_error(env, NULL, "Scope has already been escaped");
 
     return -1;
   }
@@ -632,7 +634,7 @@ js_reference_ref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
 int
 js_reference_unref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
   if (reference->count == 0) {
-    JS_ThrowInternalError(env->context, "Cannot decrease reference count");
+    js_throw_error(env, NULL, "Cannot decrease reference count");
 
     return -1;
   }
@@ -1878,18 +1880,156 @@ js_throw (js_env_t *env, js_value_t *error) {
 }
 
 int
-js_throw_error (js_env_t *env, const char *code, const char *message) {
-  JSValue error = JS_NewError(env->context);
+js_vformat (char **result, size_t *size, const char *message, va_list args) {
+  int res = vsnprintf(NULL, 0, message, args);
+  if (res < 0) return res;
 
-  JS_SetPropertyStr(env->context, error, "message", JS_NewString(env->context, message));
+  *size = res + 1 /* NULL */;
+  *result = malloc(*size);
+
+  vsnprintf(*result, *size, message, args);
+
+  return 0;
+}
+
+int
+js_throw_error (js_env_t *env, const char *code, const char *message) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Error");
+
+  JSValue arg = JS_NewString(env->context, message);
+
+  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
   }
 
+  JS_FreeValue(env->context, arg);
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
   JS_Throw(env->context, error);
 
   return 0;
+}
+
+int
+js_throw_verrorf (js_env_t *env, const char *code, const char *message, va_list args) {
+  size_t len;
+  char *formatted;
+  js_vformat(&formatted, &len, message, args);
+
+  int err = js_throw_error(env, code, formatted);
+
+  free(formatted);
+
+  return err;
+}
+
+int
+js_throw_type_error (js_env_t *env, const char *code, const char *message) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "TypeError");
+
+  JSValue arg = JS_NewString(env->context, message);
+
+  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+
+  if (code) {
+    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+  }
+
+  JS_FreeValue(env->context, arg);
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  JS_Throw(env->context, error);
+
+  return 0;
+}
+
+int
+js_throw_type_verrorf (js_env_t *env, const char *code, const char *message, va_list args) {
+  size_t len;
+  char *formatted;
+  js_vformat(&formatted, &len, message, args);
+
+  int err = js_throw_type_error(env, code, formatted);
+
+  free(formatted);
+
+  return err;
+}
+
+int
+js_throw_range_error (js_env_t *env, const char *code, const char *message) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "RangeError");
+
+  JSValue arg = JS_NewString(env->context, message);
+
+  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+
+  if (code) {
+    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+  }
+
+  JS_FreeValue(env->context, arg);
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  JS_Throw(env->context, error);
+
+  return 0;
+}
+
+int
+js_throw_range_verrorf (js_env_t *env, const char *code, const char *message, va_list args) {
+  size_t len;
+  char *formatted;
+  js_vformat(&formatted, &len, message, args);
+
+  int err = js_throw_range_error(env, code, formatted);
+
+  free(formatted);
+
+  return err;
+}
+
+int
+js_throw_syntax_error (js_env_t *env, const char *code, const char *message) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "SyntaxError");
+
+  JSValue arg = JS_NewString(env->context, message);
+
+  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+
+  if (code) {
+    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+  }
+
+  JS_FreeValue(env->context, arg);
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  JS_Throw(env->context, error);
+
+  return 0;
+}
+
+int
+js_throw_syntax_verrorf (js_env_t *env, const char *code, const char *message, va_list args) {
+  size_t len;
+  char *formatted;
+  js_vformat(&formatted, &len, message, args);
+
+  int err = js_throw_range_error(env, code, formatted);
+
+  free(formatted);
+
+  return err;
 }
 
 int
@@ -1973,7 +2113,7 @@ js_adjust_external_memory (js_env_t *env, int64_t change_in_bytes, int64_t *resu
 int
 js_request_garbage_collection (js_env_t *env) {
   if (!env->platform->options.expose_garbage_collection) {
-    JS_ThrowInternalError(env->context, "Garbage collection is unavailable");
+    js_throw_error(env, NULL, "Garbage collection is unavailable");
 
     return -1;
   }
