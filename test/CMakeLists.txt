@@ -4,6 +4,8 @@ list(APPEND tests
   call-function-throw
   create-external
   create-external-with-finalizer
+  create-external-arraybuffer
+  create-external-arraybuffer-with-finalizer
   create-function
   create-function-args-extra
   create-function-args-fewer
@@ -15,10 +17,11 @@ list(APPEND tests
   get-arraybuffer-info
   get-typedarray-info-uint8array
   get-typedarray-info-uint16array
-  run-microtask
-  run-microtask-throw
+  queue-microtask
+  queue-microtask-throw
   run-module
   run-script
+  run-script-ignore-return
   run-script-throw
   set-named-property
 )
