@@ -1067,13 +1067,12 @@ js_create_promise (js_env_t *env, js_deferred_t **deferred, js_value_t **promise
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  wrapper->value = JS_NewPromiseCapability(
-    env->context,
-    (JSValue[]){
-      (*deferred)->resolve,
-      (*deferred)->reject,
-    }
-  );
+  JSValue functions[2];
+
+  wrapper->value = JS_NewPromiseCapability(env->context, functions);
+
+  (*deferred)->resolve = functions[0];
+  (*deferred)->reject = functions[1];
 
   *promise = wrapper;
 
@@ -1084,12 +1083,14 @@ js_create_promise (js_env_t *env, js_deferred_t **deferred, js_value_t **promise
 
 int
 js_resolve_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolution) {
+  JSValue global = JS_GetGlobalObject(env->context);
+
   JS_DupValue(env->context, resolution->value);
 
-  JSValue result = JS_Call(env->context, deferred->resolve, JS_UNDEFINED, 1, &resolution->value);
+  JSValue result = JS_Call(env->context, deferred->resolve, global, 1, &resolution->value);
 
+  JS_FreeValue(env->context, global);
   JS_FreeValue(env->context, result);
-
   JS_FreeValue(env->context, deferred->resolve);
   JS_FreeValue(env->context, deferred->reject);
 
@@ -1100,12 +1101,14 @@ js_resolve_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolut
 
 int
 js_reject_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolution) {
+  JSValue global = JS_GetGlobalObject(env->context);
+
   JS_DupValue(env->context, resolution->value);
 
-  JSValue result = JS_Call(env->context, deferred->reject, JS_UNDEFINED, 1, &resolution->value);
+  JSValue result = JS_Call(env->context, deferred->reject, global, 1, &resolution->value);
 
+  JS_FreeValue(env->context, global);
   JS_FreeValue(env->context, result);
-
   JS_FreeValue(env->context, deferred->resolve);
   JS_FreeValue(env->context, deferred->reject);
 
@@ -1116,12 +1119,38 @@ js_reject_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resoluti
 
 int
 js_get_promise_state (js_env_t *env, js_value_t *promise, js_promise_state_t *result) {
-  return -1;
+  switch (JS_GetPromiseState(env->context, promise->value)) {
+  case JS_PROMISE_PENDING:
+    *result = js_promise_pending;
+    break;
+  case JS_PROMISE_FULFILLED:
+    *result = js_promise_fulfilled;
+    break;
+  case JS_PROMISE_REJECTED:
+    *result = js_promise_rejected;
+    break;
+  }
+
+  return 0;
 }
 
 int
 js_get_promise_result (js_env_t *env, js_value_t *promise, js_value_t **result) {
-  return -1;
+  if (JS_GetPromiseState(env->context, promise->value) == JS_PROMISE_PENDING) {
+    js_throw_error(env, NULL, "Promise is pending");
+
+    return -1;
+  }
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = JS_GetPromiseResult(env->context, promise->value);
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
 }
 
 int

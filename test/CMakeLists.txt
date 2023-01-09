@@ -11,6 +11,8 @@ list(APPEND tests
   create-function-args-fewer
   create-function-throw
   create-function-throw-indirect
+  create-promise-reject
+  create-promise-resolve
   create-reference
   create-reference-weak
   fatal-exception
