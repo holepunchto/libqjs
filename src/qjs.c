@@ -1427,7 +1427,9 @@ js_is_dataview (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_strict_equals (js_env_t *env, js_value_t *a, js_value_t *b, bool *result) {
-  return -1;
+  *result = JS_StrictEq(env->context, a->value, b->value);
+
+  return 0;
 }
 
 int
