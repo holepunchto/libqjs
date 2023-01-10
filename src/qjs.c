@@ -1676,7 +1676,13 @@ js_get_value_date (js_env_t *env, js_value_t *value, double *result) {
 
 int
 js_get_array_length (js_env_t *env, js_value_t *value, uint32_t *result) {
-  return -1;
+  JSValue length = JS_GetPropertyStr(env->context, value->value, "length");
+
+  JS_ToUint32(env->context, result, length);
+
+  JS_FreeValue(env->context, length);
+
+  return 0;
 }
 
 int
