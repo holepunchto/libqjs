@@ -35,6 +35,7 @@ struct js_env_s {
   js_handle_scope_t *scope;
   JSRuntime *runtime;
   JSContext *context;
+  int64_t external_memory;
   js_module_resolver_t *resolvers;
   js_module_evaluator_t *evaluators;
   js_uncaught_exception_cb on_uncaught_exception;
@@ -307,6 +308,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   env->platform = platform;
   env->runtime = runtime;
   env->context = context;
+  env->external_memory = 0;
 
   JS_SetRuntimeOpaque(runtime, env);
   JS_SetContextOpaque(context, env);
@@ -2245,7 +2247,13 @@ js_queue_macrotask (js_env_t *env, js_task_cb cb, void *data, uint64_t delay) {
 
 int
 js_adjust_external_memory (js_env_t *env, int64_t change_in_bytes, int64_t *result) {
-  return -1;
+  env->external_memory += change_in_bytes;
+
+  if (result) {
+    *result = env->external_memory;
+  }
+
+  return 0;
 }
 
 int
