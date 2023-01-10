@@ -587,11 +587,15 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
 
 static inline void
 js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
+  JS_FreeValue(env->context, reference->value);
+
   // TODO: Attach symbol with finalizer
 }
 
 static inline void
 js_clear_weak_reference (js_env_t *env, js_ref_t *reference) {
+  JS_DupValue(env->context, reference->value);
+
   // TODO: Detach symbol with finalizer
 }
 
@@ -669,17 +673,69 @@ js_get_reference_value (js_env_t *env, js_ref_t *reference, js_value_t **result)
 
 int
 js_wrap (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_ref_t **result) {
-  return -1;
+  js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
+
+  finalizer->env = env;
+  finalizer->data = data;
+  finalizer->cb = finalize_cb;
+  finalizer->hint = finalize_hint;
+
+  JSValue external = JS_NewObjectClass(env->context, js_external_data_class_id);
+
+  JS_SetOpaque(external, finalizer);
+
+  JSAtom atom = JS_NewAtom(env->context, "__native_external");
+
+  JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+
+  JS_FreeAtom(env->context, atom);
+
+  if (result) {
+    js_ref_t *reference = malloc(sizeof(js_ref_t));
+
+    reference->value = object->value;
+    reference->count = 0;
+
+    *result = reference;
+  }
+
+  return 0;
 }
 
 int
 js_unwrap (js_env_t *env, js_value_t *object, void **result) {
-  return -1;
+  JSAtom atom = JS_NewAtom(env->context, "__native_external");
+
+  JSValue external = JS_GetProperty(env->context, object->value, atom);
+
+  JS_FreeAtom(env->context, atom);
+
+  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_data_class_id);
+
+  *result = finalizer->data;
+
+  return 0;
 }
 
 int
 js_remove_wrap (js_env_t *env, js_value_t *object, void **result) {
-  return -1;
+  JSValue external = JS_GetPropertyStr(env->context, object->value, "__native_external");
+
+  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_data_class_id);
+
+  finalizer->cb = NULL;
+
+  if (result) {
+    *result = finalizer->data;
+  }
+
+  JSAtom atom = JS_NewAtom(env->context, "__native_external");
+
+  JS_DeleteProperty(env->context, object->value, atom, 0);
+
+  JS_FreeAtom(env->context, atom);
+
+  return 0;
 }
 
 int

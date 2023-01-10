@@ -26,6 +26,10 @@ list(APPEND tests
   run-script-ignore-return
   run-script-throw
   set-named-property
+  wrap
+  wrap-with-finalizer
+  wrap-with-reference
+  wrap-remove-with-finalizer
 )
 
 foreach(test IN LISTS tests)
