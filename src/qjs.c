@@ -1316,6 +1316,16 @@ js_detach_arraybuffer (js_env_t *env, js_value_t *arraybuffer) {
 }
 
 int
+js_create_typedarray (js_env_t *env, js_typedarray_type_t type, size_t len, js_value_t *arraybuffer, size_t offset, js_value_t **result) {
+  return -1;
+}
+
+int
+js_create_dataview (js_env_t *env, size_t len, js_value_t *arraybuffer, size_t offset, js_value_t **result) {
+  return -1;
+}
+
+int
 js_typeof (js_env_t *env, js_value_t *value, js_value_type_t *result) {
   if (JS_IsNumber(value->value)) {
     *result = js_number;
@@ -1468,6 +1478,15 @@ js_is_arraybuffer (js_env_t *env, js_value_t *value, bool *result) {
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_detached_arraybuffer (js_env_t *env, js_value_t *value, bool *result) {
+  size_t len;
+
+  *result = JS_GetArrayBuffer(env->context, &len, value->value) == NULL;
 
   return 0;
 }
