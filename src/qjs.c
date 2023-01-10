@@ -415,7 +415,7 @@ js_close_escapable_handle_scope (js_env_t *env, js_escapable_handle_scope_t *sco
 
 static int
 js_attach_to_handle_scope (js_env_t *env, js_handle_scope_t *scope, js_value_t *value) {
-  if (scope->len <= scope->capacity) {
+  if (scope->len >= scope->capacity) {
     if (scope->capacity) scope->capacity *= 2;
     else scope->capacity = 4;
 
