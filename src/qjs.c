@@ -933,22 +933,13 @@ js_create_external (js_env_t *env, void *data, js_finalize_cb finalize_cb, void 
 
 int
 js_create_date (js_env_t *env, double time, js_value_t **result) {
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Date");
-
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  JSValue arg = JS_NewFloat64(env->context, time);
-
-  wrapper->value = JS_CallConstructor(env->context, constructor, 1, &arg);
+  wrapper->value = JS_NewDate(env->context, time);
 
   *result = wrapper;
 
   js_attach_to_handle_scope(env, env->scope, wrapper);
-
-  JS_FreeValue(env->context, arg);
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   return 0;
 }
@@ -1570,7 +1561,9 @@ js_get_value_external (js_env_t *env, js_value_t *value, void **result) {
 
 int
 js_get_value_date (js_env_t *env, js_value_t *value, double *result) {
-  return -1;
+  JS_ToDate(env->context, result, value->value);
+
+  return 0;
 }
 
 int
