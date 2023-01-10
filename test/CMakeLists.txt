@@ -1,4 +1,5 @@
 list(APPEND tests
+  adjust-external-memory
   call-function
   call-function-ignore-return
   call-function-throw
