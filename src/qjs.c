@@ -585,18 +585,54 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
   return 0;
 }
 
+static void
+on_reference_finalize (js_env_t *env, void *data, void *finalize_hint) {
+  js_ref_t *reference = (js_ref_t *) data;
+
+  reference->value = JS_NULL;
+}
+
 static inline void
 js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
+  if (JS_IsNull(reference->value)) return;
+
   JS_FreeValue(env->context, reference->value);
 
-  // TODO: Attach symbol with finalizer
+  js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
+
+  finalizer->env = env;
+  finalizer->data = reference;
+  finalizer->cb = on_reference_finalize;
+  finalizer->hint = NULL;
+
+  JSValue external = JS_NewObjectClass(env->context, js_external_data_class_id);
+
+  JS_SetOpaque(external, finalizer);
+
+  JSAtom atom = JS_NewAtom(env->context, "__native_reference");
+
+  JS_DefinePropertyValue(env->context, reference->value, atom, external, 0);
+
+  JS_FreeAtom(env->context, atom);
 }
 
 static inline void
 js_clear_weak_reference (js_env_t *env, js_ref_t *reference) {
+  if (JS_IsNull(reference->value)) return;
+
   JS_DupValue(env->context, reference->value);
 
-  // TODO: Detach symbol with finalizer
+  JSAtom atom = JS_NewAtom(env->context, "__native_reference");
+
+  JSValue external = JS_GetProperty(env->context, reference->value, atom);
+
+  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_data_class_id);
+
+  finalizer->cb = NULL;
+
+  JS_DeleteProperty(env->context, reference->value, atom, 0);
+
+  JS_FreeAtom(env->context, atom);
 }
 
 int
@@ -615,7 +651,23 @@ js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t 
 
 int
 js_delete_reference (js_env_t *env, js_ref_t *reference) {
-  JS_FreeValue(env->context, reference->value);
+  if (!JS_IsNull(reference->value)) {
+    if (reference->count == 0) {
+      JSAtom atom = JS_NewAtom(env->context, "__native_reference");
+
+      JSValue external = JS_GetProperty(env->context, reference->value, atom);
+
+      js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_data_class_id);
+
+      finalizer->cb = NULL;
+
+      JS_DeleteProperty(env->context, reference->value, atom, 0);
+
+      JS_FreeAtom(env->context, atom);
+    }
+
+    JS_FreeValue(env->context, reference->value);
+  }
 
   free(reference);
 
@@ -719,7 +771,9 @@ js_unwrap (js_env_t *env, js_value_t *object, void **result) {
 
 int
 js_remove_wrap (js_env_t *env, js_value_t *object, void **result) {
-  JSValue external = JS_GetPropertyStr(env->context, object->value, "__native_external");
+  JSAtom atom = JS_NewAtom(env->context, "__native_external");
+
+  JSValue external = JS_GetProperty(env->context, object->value, atom);
 
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_data_class_id);
 
@@ -728,8 +782,6 @@ js_remove_wrap (js_env_t *env, js_value_t *object, void **result) {
   if (result) {
     *result = finalizer->data;
   }
-
-  JSAtom atom = JS_NewAtom(env->context, "__native_external");
 
   JS_DeleteProperty(env->context, object->value, atom, 0);
 
