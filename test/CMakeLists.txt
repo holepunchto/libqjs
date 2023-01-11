@@ -20,6 +20,8 @@ list(APPEND tests
   get-arraybuffer-info
   get-typedarray-info-uint8array
   get-typedarray-info-uint16array
+  promise-rejection
+  promise-rejection-unhandled
   queue-microtask
   queue-microtask-throw
   run-module

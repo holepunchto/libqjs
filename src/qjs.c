@@ -15,6 +15,7 @@ typedef struct js_source_text_module_s js_source_text_module_t;
 typedef struct js_synthetic_module_s js_synthetic_module_t;
 typedef struct js_module_resolver_s js_module_resolver_t;
 typedef struct js_module_evaluator_s js_module_evaluator_t;
+typedef struct js_promise_rejection_s js_promise_rejection_t;
 
 struct js_task_s {
   js_env_t *env;
@@ -38,8 +39,11 @@ struct js_env_s {
   int64_t external_memory;
   js_module_resolver_t *resolvers;
   js_module_evaluator_t *evaluators;
+  js_promise_rejection_t *promise_rejections;
   js_uncaught_exception_cb on_uncaught_exception;
   void *uncaught_exception_data;
+  js_unhandled_rejection_cb on_unhandled_rejection;
+  void *unhandled_rejection_data;
 };
 
 struct js_value_s {
@@ -105,6 +109,11 @@ struct js_callback_info_s {
   int argc;
   JSValue *argv;
   JSValue self;
+};
+
+struct js_promise_rejection_s {
+  JSValue promise;
+  js_promise_rejection_t *next;
 };
 
 const char *js_platform_identifier = "quickjs";
@@ -204,7 +213,10 @@ static void
 on_uncaught_exception (JSContext *context, JSValue error) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  if (env->on_uncaught_exception == NULL) return;
+  if (env->on_uncaught_exception == NULL) {
+    JS_FreeValue(context, error);
+    return;
+  }
 
   js_value_t wrapper;
   wrapper.value = error;
@@ -215,6 +227,59 @@ on_uncaught_exception (JSContext *context, JSValue error) {
   env->on_uncaught_exception(env, &wrapper, env->uncaught_exception_data);
 
   js_close_handle_scope(env, scope);
+}
+
+static void
+on_unhandled_rejection (JSContext *context, JSValue promise) {
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
+
+  if (env->on_unhandled_rejection == NULL) {
+    JS_FreeValue(context, promise);
+    return;
+  }
+
+  js_value_t wrapper;
+  wrapper.value = promise;
+
+  js_handle_scope_t *scope;
+  js_open_handle_scope(env, &scope);
+
+  env->on_unhandled_rejection(env, &wrapper, env->unhandled_rejection_data);
+
+  js_close_handle_scope(env, scope);
+}
+
+static void
+on_promise_rejection (JSContext *context, JSValueConst promise, JSValueConst reason, JS_BOOL is_handled, void *opaque) {
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
+
+  if (env->on_unhandled_rejection == NULL) return;
+
+  if (is_handled) {
+    js_promise_rejection_t *next = env->promise_rejections;
+    js_promise_rejection_t *prev = NULL;
+
+    while (next) {
+      if (JS_VALUE_GET_OBJ(next->promise) == JS_VALUE_GET_OBJ(promise)) {
+        JS_FreeValue(context, next->promise);
+
+        if (prev) prev->next = next->next;
+        else env->promise_rejections = next->next;
+
+        return free(next);
+      }
+
+      prev = next;
+      next = next->next;
+    }
+  } else {
+    js_promise_rejection_t *node = malloc(sizeof(js_promise_rejection_t));
+
+    node->promise = JS_DupValue(context, promise);
+    node->next = env->promise_rejections;
+
+    env->promise_rejections = node;
+  }
 }
 
 static inline void
@@ -230,6 +295,20 @@ run_microtasks (js_env_t *env) {
     if (JS_IsNull(error)) continue;
 
     on_uncaught_exception(context, error);
+  }
+
+  js_promise_rejection_t *next = env->promise_rejections;
+  js_promise_rejection_t *prev = NULL;
+
+  env->promise_rejections = NULL;
+
+  while (next) {
+    on_unhandled_rejection(env->context, next->promise);
+
+    prev = next;
+    next = next->next;
+
+    free(prev);
   }
 }
 
@@ -283,6 +362,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
 
   JS_SetCanBlock(runtime, false);
   JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
+  JS_SetHostPromiseRejectionTracker(runtime, on_promise_rejection, NULL);
 
   uint64_t constrained_memory = uv_get_constrained_memory();
   uint64_t total_memory = uv_get_total_memory();
@@ -309,6 +389,14 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   env->runtime = runtime;
   env->context = context;
   env->external_memory = 0;
+
+  env->promise_rejections = NULL;
+
+  env->on_uncaught_exception = NULL;
+  env->uncaught_exception_data = NULL;
+
+  env->on_unhandled_rejection = NULL;
+  env->unhandled_rejection_data = NULL;
 
   JS_SetRuntimeOpaque(runtime, env);
   JS_SetContextOpaque(context, env);
@@ -349,6 +437,14 @@ int
 js_on_uncaught_exception (js_env_t *env, js_uncaught_exception_cb cb, void *data) {
   env->on_uncaught_exception = cb;
   env->uncaught_exception_data = data;
+
+  return 0;
+}
+
+int
+js_on_unhandled_rejection (js_env_t *env, js_unhandled_rejection_cb cb, void *data) {
+  env->on_unhandled_rejection = cb;
+  env->unhandled_rejection_data = data;
 
   return 0;
 }
