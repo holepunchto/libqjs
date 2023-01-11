@@ -840,14 +840,7 @@ js_wrap (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_
 
   JS_FreeAtom(env->context, atom);
 
-  if (result) {
-    js_ref_t *reference = malloc(sizeof(js_ref_t));
-
-    reference->value = object->value;
-    reference->count = 0;
-
-    *result = reference;
-  }
+  if (result) js_create_reference(env, object, 0, result);
 
   return 0;
 }
