@@ -210,6 +210,13 @@ on_external_finalize (JSRuntime *runtime, JSValue value) {
 }
 
 static void
+on_function_finalize (JSRuntime *runtime, JSValue value) {
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(value, js_function_data_class_id);
+
+  free(callback);
+}
+
+static void
 on_uncaught_exception (JSContext *context, JSValue error) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
@@ -381,6 +388,13 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   };
 
   JS_NewClass(runtime, js_external_data_class_id, &external_class);
+
+  JSClassDef function_class = {
+    .class_name = "Function",
+    .finalizer = on_function_finalize,
+  };
+
+  JS_NewClass(runtime, js_function_data_class_id, &function_class);
 
   js_env_t *env = malloc(sizeof(js_env_t));
 
