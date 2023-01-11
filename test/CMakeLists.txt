@@ -2,6 +2,7 @@ list(APPEND tests
   adjust-external-memory
   call-function
   call-function-ignore-return
+  call-function-microtask
   call-function-throw
   create-external
   create-external-with-finalizer
@@ -20,6 +21,7 @@ list(APPEND tests
   get-arraybuffer-info
   get-typedarray-info-uint8array
   get-typedarray-info-uint16array
+  make-callback
   promise-rejection
   promise-rejection-unhandled
   queue-microtask
