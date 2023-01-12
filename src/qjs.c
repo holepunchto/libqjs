@@ -1550,11 +1550,7 @@ js_is_array (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_external (js_env_t *env, js_value_t *value, bool *result) {
-  JSValue external = JS_GetClassProto(env->context, js_external_data_class_id);
-
-  *result = JS_IsInstanceOf(env->context, value->value, external);
-
-  JS_FreeValue(env->context, external);
+  *result = JS_IsObject(value->value) && JS_GetOpaque(value->value, js_external_data_class_id) != NULL;
 
   return 0;
 }
