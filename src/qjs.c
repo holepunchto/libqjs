@@ -34,6 +34,7 @@ struct js_env_s {
   uv_check_t check;
   js_platform_t *platform;
   js_handle_scope_t *scope;
+  uint32_t depth;
   JSRuntime *runtime;
   JSContext *context;
   int64_t external_memory;
@@ -400,6 +401,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
 
   env->loop = loop;
   env->platform = platform;
+  env->depth = 0;
   env->runtime = runtime;
   env->context = context;
   env->external_memory = 0;
@@ -563,9 +565,15 @@ js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
   size_t str_len;
   const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
 
+  env->depth++;
+
   JSValue value = JS_Eval(env->context, str, str_len, "<anonymous>", JS_EVAL_TYPE_GLOBAL);
 
+  env->depth--;
+
   JS_FreeCString(env->context, str);
+
+  if (env->depth == 0) run_microtasks(env);
 
   if (JS_IsException(value)) return -1;
 
@@ -688,7 +696,13 @@ int
 js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
+  env->depth++;
+
   wrapper->value = JS_EvalFunction(env->context, module->bytecode);
+
+  env->depth--;
+
+  if (env->depth == 0) run_microtasks(env);
 
   *result = wrapper;
 
@@ -2105,9 +2119,15 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
     args[i] = argv[i]->value;
   }
 
+  env->depth++;
+
   JSValue value = JS_Call(env->context, fn->value, recv->value, argc, args);
 
+  env->depth--;
+
   free(args);
+
+  if (env->depth == 0) run_microtasks(env);
 
   if (JS_IsException(value)) return -1;
 
@@ -2123,15 +2143,6 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
   }
 
   return 0;
-}
-
-int
-js_make_callback (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, js_value_t *const argv[], js_value_t **result) {
-  int err = js_call_function(env, recv, fn, argc, argv, result);
-
-  run_microtasks(env);
-
-  return err;
 }
 
 int
