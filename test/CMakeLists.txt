@@ -24,8 +24,6 @@ list(APPEND tests
   get-typedarray-info-uint16array
   promise-rejection
   promise-rejection-unhandled
-  queue-microtask
-  queue-microtask-throw
   run-module
   run-script
   run-script-ignore-return

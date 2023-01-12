@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <uv.h>
 
-typedef struct js_task_s js_task_t;
 typedef struct js_callback_s js_callback_t;
 typedef struct js_finalizer_s js_finalizer_t;
 typedef struct js_source_text_module_s js_source_text_module_t;
@@ -16,12 +15,6 @@ typedef struct js_synthetic_module_s js_synthetic_module_t;
 typedef struct js_module_resolver_s js_module_resolver_t;
 typedef struct js_module_evaluator_s js_module_evaluator_t;
 typedef struct js_promise_rejection_s js_promise_rejection_t;
-
-struct js_task_s {
-  js_env_t *env;
-  js_task_cb cb;
-  void *data;
-};
 
 struct js_platform_s {
   js_platform_options_t options;
@@ -200,24 +193,6 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
 }
 
 static void
-on_external_finalize (JSRuntime *runtime, JSValue value) {
-  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value, js_external_data_class_id);
-
-  if (finalizer->cb) {
-    finalizer->cb(finalizer->env, finalizer->data, finalizer->hint);
-  }
-
-  free(finalizer);
-}
-
-static void
-on_function_finalize (JSRuntime *runtime, JSValue value) {
-  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(value, js_function_data_class_id);
-
-  free(callback);
-}
-
-static void
 on_uncaught_exception (JSContext *context, JSValue error) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
@@ -350,6 +325,12 @@ on_check (uv_check_t *handle) {
   check_liveness(env);
 }
 
+static void
+on_external_finalize (JSRuntime *runtime, JSValue value);
+
+static void
+on_function_finalize (JSRuntime *runtime, JSValue value);
+
 int
 js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   JSRuntime *runtime = JS_NewRuntime();
@@ -383,19 +364,23 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
     JS_SetMemoryLimit(runtime, total_memory);
   }
 
-  JSClassDef external_class = {
-    .class_name = "External",
-    .finalizer = on_external_finalize,
-  };
+  JS_NewClass(
+    runtime,
+    js_external_data_class_id,
+    &(JSClassDef){
+      .class_name = "External",
+      .finalizer = on_external_finalize,
+    }
+  );
 
-  JS_NewClass(runtime, js_external_data_class_id, &external_class);
-
-  JSClassDef function_class = {
-    .class_name = "Function",
-    .finalizer = on_function_finalize,
-  };
-
-  JS_NewClass(runtime, js_function_data_class_id, &function_class);
+  JS_NewClass(
+    runtime,
+    js_function_data_class_id,
+    &(JSClassDef){
+      .class_name = "Function",
+      .finalizer = on_function_finalize,
+    }
+  );
 
   js_env_t *env = malloc(sizeof(js_env_t));
 
@@ -575,7 +560,17 @@ js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
 
   if (env->depth == 0) run_microtasks(env);
 
-  if (JS_IsException(value)) return -1;
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+
+      JS_Throw(env->context, error);
+    }
+
+    return -1;
+  }
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -1038,6 +1033,13 @@ js_create_object (js_env_t *env, js_value_t **result) {
   return 0;
 }
 
+static void
+on_function_finalize (JSRuntime *runtime, JSValue value) {
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(value, js_function_data_class_id);
+
+  free(callback);
+}
+
 static JSValue
 on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst *argv, int magic, JSValue *data) {
   js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_function_data_class_id);
@@ -1132,6 +1134,17 @@ js_create_array_with_length (js_env_t *env, size_t len, js_value_t **result) {
   JS_FreeValue(env->context, global);
 
   return 0;
+}
+
+static void
+on_external_finalize (JSRuntime *runtime, JSValue value) {
+  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value, js_external_data_class_id);
+
+  if (finalizer->cb) {
+    finalizer->cb(finalizer->env, finalizer->data, finalizer->hint);
+  }
+
+  free(finalizer);
 }
 
 int
@@ -2129,7 +2142,17 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
 
   if (env->depth == 0) run_microtasks(env);
 
-  if (JS_IsException(value)) return -1;
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+
+      JS_Throw(env->context, error);
+    }
+
+    return -1;
+  }
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -2341,41 +2364,6 @@ js_fatal_exception (js_env_t *env, js_value_t *error) {
   on_uncaught_exception(env->context, error->value);
 
   return 0;
-}
-
-static JSValue
-on_job (JSContext *context, int argc, JSValueConst *argv) {
-  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
-
-  js_task_t *task = (js_task_t *) JS_GetOpaque(*argv, js_job_data_class_id);
-
-  task->cb(env, task->data);
-
-  return JS_NULL;
-}
-
-int
-js_queue_microtask (js_env_t *env, js_task_cb cb, void *data) {
-  js_task_t *task = malloc(sizeof(js_task_t));
-
-  task->env = env;
-  task->cb = cb;
-  task->data = data;
-
-  JSValue external = JS_NewObjectClass(env->context, js_job_data_class_id);
-
-  JS_SetOpaque(external, task);
-
-  JS_EnqueueJob(env->context, on_job, 1, &external);
-
-  JS_FreeValue(env->context, external);
-
-  return 0;
-}
-
-int
-js_queue_macrotask (js_env_t *env, js_task_cb cb, void *data, uint64_t delay) {
-  return -1;
 }
 
 int
