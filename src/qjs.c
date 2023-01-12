@@ -10,6 +10,7 @@
 
 typedef struct js_callback_s js_callback_t;
 typedef struct js_finalizer_s js_finalizer_t;
+typedef struct js_finalizer_list_s js_finalizer_list_t;
 typedef struct js_source_text_module_s js_source_text_module_t;
 typedef struct js_synthetic_module_s js_synthetic_module_t;
 typedef struct js_module_resolver_s js_module_resolver_t;
@@ -92,6 +93,11 @@ struct js_finalizer_s {
   void *hint;
 };
 
+struct js_finalizer_list_s {
+  js_finalizer_t finalizer;
+  js_finalizer_list_t *next;
+};
+
 struct js_callback_s {
   js_env_t *env;
   js_function_cb cb;
@@ -114,9 +120,9 @@ const char *js_platform_identifier = "quickjs";
 
 const char *js_platform_version = NULL;
 
-static JSClassID js_job_data_class_id;
-static JSClassID js_function_data_class_id;
 static JSClassID js_external_data_class_id;
+static JSClassID js_finalizer_data_class_id;
+static JSClassID js_function_data_class_id;
 
 static uv_once_t js_platform_init = UV_ONCE_INIT;
 
@@ -125,9 +131,9 @@ on_platform_init () {
   // Class IDs are globally allocated, so we guard their initialization with a
   // `uv_once_t`.
 
-  JS_NewClassID(&js_job_data_class_id);
-  JS_NewClassID(&js_function_data_class_id);
   JS_NewClassID(&js_external_data_class_id);
+  JS_NewClassID(&js_finalizer_data_class_id);
+  JS_NewClassID(&js_function_data_class_id);
 }
 
 int
@@ -329,6 +335,9 @@ static void
 on_external_finalize (JSRuntime *runtime, JSValue value);
 
 static void
+on_finalizer_finalize (JSRuntime *runtime, JSValue value);
+
+static void
 on_function_finalize (JSRuntime *runtime, JSValue value);
 
 int
@@ -370,6 +379,15 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
     &(JSClassDef){
       .class_name = "External",
       .finalizer = on_external_finalize,
+    }
+  );
+
+  JS_NewClass(
+    runtime,
+    js_finalizer_data_class_id,
+    &(JSClassDef){
+      .class_name = "Finalizer",
+      .finalizer = on_finalizer_finalize,
     }
   );
 
@@ -900,6 +918,62 @@ js_remove_wrap (js_env_t *env, js_value_t *object, void **result) {
   JS_DeleteProperty(env->context, object->value, atom, 0);
 
   JS_FreeAtom(env->context, atom);
+
+  return 0;
+}
+
+static void
+on_finalizer_finalize (JSRuntime *runtime, JSValue value) {
+  js_finalizer_list_t *next = (js_finalizer_list_t *) JS_GetOpaque(value, js_finalizer_data_class_id);
+
+  js_finalizer_list_t *prev = NULL;
+
+  while (next) {
+    js_finalizer_t *finalizer = &next->finalizer;
+
+    if (finalizer->cb) {
+      finalizer->cb(finalizer->env, finalizer->data, finalizer->hint);
+    }
+
+    prev = next;
+    next = next->next;
+
+    free(prev);
+  }
+}
+
+int
+js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_ref_t **result) {
+  js_finalizer_list_t *prev = malloc(sizeof(js_finalizer_list_t));
+
+  js_finalizer_t *finalizer = &prev->finalizer;
+
+  finalizer->env = env;
+  finalizer->data = data;
+  finalizer->cb = finalize_cb;
+  finalizer->hint = finalize_hint;
+
+  JSAtom atom = JS_NewAtom(env->context, "__native_finalizer");
+
+  JSValue external;
+
+  if (JS_HasProperty(env->context, object->value, atom)) {
+    external = JS_GetProperty(env->context, object->value, atom);
+  } else {
+    external = JS_NewObjectClass(env->context, js_finalizer_data_class_id);
+
+    JS_SetOpaque(external, NULL);
+
+    JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+  }
+
+  JS_FreeAtom(env->context, atom);
+
+  prev->next = (js_finalizer_list_t *) JS_GetOpaque(external, js_finalizer_data_class_id);
+
+  JS_SetOpaque(external, prev);
+
+  if (result) js_create_reference(env, object, 0, result);
 
   return 0;
 }
