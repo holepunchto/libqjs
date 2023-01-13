@@ -21,6 +21,7 @@ list(APPEND tests
   create-reference-weak
   fatal-exception
   get-arraybuffer-info
+  get-dataview-info
   get-typedarray-info-uint8array
   get-typedarray-info-uint16array
   promise-rejection

@@ -1521,12 +1521,88 @@ js_detach_arraybuffer (js_env_t *env, js_value_t *arraybuffer) {
 
 int
 js_create_typedarray (js_env_t *env, js_typedarray_type_t type, size_t len, js_value_t *arraybuffer, size_t offset, js_value_t **result) {
-  return -1;
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor;
+
+  switch (type) {
+  case js_int8_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Int8Array");
+    break;
+  case js_uint8_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Uint8Array");
+    break;
+  case js_uint8_clamped_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Uint8ClampedArray");
+    break;
+  case js_int16_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Int16Array");
+    break;
+  case js_uint16_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Uint16Array");
+    break;
+  case js_int32_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Int32Array");
+    break;
+  case js_uint32_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Uint32Array");
+    break;
+  case js_float32_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Float32Array");
+    break;
+  case js_float64_array:
+    constructor = JS_GetPropertyStr(env->context, global, "Float64Array");
+    break;
+  case js_bigint64_array:
+    constructor = JS_GetPropertyStr(env->context, global, "BigInt64Array");
+    break;
+  case js_biguint64_array:
+    constructor = JS_GetPropertyStr(env->context, global, "BigUint64Array");
+    break;
+  }
+
+  JSValue argv[3] = {JS_DupValue(env->context, arraybuffer->value), JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
+
+  JSValue typedarray = JS_CallConstructor(env->context, constructor, 3, argv);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  if (JS_IsException(typedarray)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = typedarray;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
 }
 
 int
 js_create_dataview (js_env_t *env, size_t len, js_value_t *arraybuffer, size_t offset, js_value_t **result) {
-  return -1;
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "DataView");
+
+  JSValue argv[3] = {JS_DupValue(env->context, arraybuffer->value), JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
+
+  JSValue typedarray = JS_CallConstructor(env->context, constructor, 3, argv);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  if (JS_IsException(typedarray)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = typedarray;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
 }
 
 int
@@ -1540,12 +1616,9 @@ js_typeof (js_env_t *env, js_value_t *value, js_value_type_t *result) {
   } else if (JS_IsFunction(env->context, value->value)) {
     *result = js_function;
   } else if (JS_IsObject(value->value)) {
-    bool is_external;
-
-    int err = js_is_external(env, value, &is_external);
-    if (err < 0) return err;
-
-    *result = is_external ? js_external : js_object;
+    *result = JS_GetOpaque(value->value, js_external_data_class_id) != NULL
+                ? js_external
+                : js_object;
   } else if (JS_IsBool(value->value)) {
     *result = js_boolean;
   } else if (JS_IsUndefined(value->value)) {
@@ -2116,9 +2189,7 @@ js_get_arraybuffer_info (js_env_t *env, js_value_t *arraybuffer, void **pdata, s
 
 int
 js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_type_t *ptype, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
-  size_t len, offset, byte_len, bytes_per_element;
-
-  JSValue arraybuffer = JS_GetTypedArrayBuffer(env->context, typedarray->value, &offset, &byte_len, &bytes_per_element);
+  size_t offset, byte_len, bytes_per_element;
 
   if (ptype) {
     JSValue global = JS_GetGlobalObject(env->context);
@@ -2156,14 +2227,12 @@ js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_typ
     JS_FreeValue(env->context, global);
   }
 
-  uint8_t *data;
-
-  if (pdata || parraybuffer) {
-    data = JS_GetArrayBuffer(env->context, &len, arraybuffer);
-  }
+  JSValue arraybuffer = JS_GetTypedArrayBuffer(env->context, typedarray->value, &offset, &byte_len, &bytes_per_element);
 
   if (pdata) {
-    *pdata = data;
+    size_t size;
+
+    *pdata = JS_GetArrayBuffer(env->context, &size, arraybuffer);
   }
 
   if (plen) {
@@ -2191,7 +2260,49 @@ js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_typ
 
 int
 js_get_dataview_info (js_env_t *env, js_value_t *dataview, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
-  return -1;
+  JSValue arraybuffer;
+
+  if (pdata || parraybuffer) {
+    arraybuffer = JS_GetPropertyStr(env->context, dataview->value, "buffer");
+  }
+
+  if (pdata) {
+    size_t size;
+
+    *pdata = JS_GetArrayBuffer(env->context, &size, arraybuffer);
+  }
+
+  if (plen) {
+    JSValue value = JS_GetPropertyStr(env->context, dataview->value, "byteLength");
+
+    JS_ToInt64(env->context, (int64_t *) plen, value);
+
+    JS_FreeValue(env->context, value);
+  }
+
+  if (parraybuffer) {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = JS_DupValue(env->context, arraybuffer);
+
+    *parraybuffer = wrapper;
+
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
+
+  if (poffset) {
+    JSValue value = JS_GetPropertyStr(env->context, dataview->value, "byteOffset");
+
+    JS_ToInt64(env->context, (int64_t *) poffset, value);
+
+    JS_FreeValue(env->context, value);
+  }
+
+  if (pdata || parraybuffer) {
+    JS_FreeValue(env->context, arraybuffer);
+  }
+
+  return 0;
 }
 
 int
