@@ -1,4 +1,5 @@
 #include <js.h>
+#include <js/ffi.h>
 #include <quickjs.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -1173,6 +1174,11 @@ js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb 
   js_attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
+}
+
+int
+js_create_function_with_ffi (js_env_t *env, const char *name, size_t len, js_function_cb cb, void *data, js_ffi_function_t *ffi, js_value_t **result) {
+  return js_create_function(env, name, len, cb, data, result);
 }
 
 int
@@ -2567,6 +2573,27 @@ js_request_garbage_collection (js_env_t *env) {
   }
 
   JS_RunGC(env->runtime);
+
+  return 0;
+}
+
+int
+js_ffi_create_type_info (js_ffi_type_t type, js_ffi_type_info_t **result) {
+  *result = NULL;
+
+  return 0;
+}
+
+int
+js_ffi_create_function_info (const js_ffi_type_info_t *return_info, js_ffi_type_info_t *const arg_info[], unsigned int arg_len, js_ffi_function_info_t **result) {
+  *result = NULL;
+
+  return 0;
+}
+
+int
+js_ffi_create_function (const void *function, const js_ffi_function_info_t *type_info, js_ffi_function_t **result) {
+  *result = NULL;
 
   return 0;
 }
