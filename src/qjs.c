@@ -2391,7 +2391,7 @@ js_throw_syntax_verrorf (js_env_t *env, const char *code, const char *message, v
   char *formatted;
   js_vformat(&formatted, &len, message, args);
 
-  int err = js_throw_range_error(env, code, formatted);
+  int err = js_throw_syntax_error(env, code, formatted);
 
   free(formatted);
 
