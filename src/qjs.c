@@ -1940,11 +1940,13 @@ js_get_value_string_utf8 (js_env_t *env, js_value_t *value, char *str, size_t le
   if (str == NULL) {
     *result = cstr_len;
   } else if (len != 0) {
-    len = cstr_len < len - 1 ? cstr_len : len - 1;
+    len = cstr_len < len ? cstr_len : len;
 
     strncpy(str, cstr, len);
 
-    str[len] = '\0';
+    if (cstr_len < len) {
+      str[cstr_len] = '\0';
+    }
 
     if (result) {
       *result = len;
