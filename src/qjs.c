@@ -2412,6 +2412,9 @@ js_throw_verrorf (js_env_t *env, const char *code, const char *message, va_list 
   return err;
 }
 
+extern int
+js_throw_errorf (js_env_t *env, const char *code, const char *message, ...);
+
 int
 js_throw_type_error (js_env_t *env, const char *code, const char *message) {
   JSValue global = JS_GetGlobalObject(env->context);
@@ -2446,6 +2449,9 @@ js_throw_type_verrorf (js_env_t *env, const char *code, const char *message, va_
 
   return err;
 }
+
+extern int
+js_throw_type_errorf (js_env_t *env, const char *code, const char *message, ...);
 
 int
 js_throw_range_error (js_env_t *env, const char *code, const char *message) {
@@ -2482,6 +2488,9 @@ js_throw_range_verrorf (js_env_t *env, const char *code, const char *message, va
   return err;
 }
 
+extern int
+js_throw_range_errorf (js_env_t *env, const char *code, const char *message, ...);
+
 int
 js_throw_syntax_error (js_env_t *env, const char *code, const char *message) {
   JSValue global = JS_GetGlobalObject(env->context);
@@ -2516,6 +2525,9 @@ js_throw_syntax_verrorf (js_env_t *env, const char *code, const char *message, v
 
   return err;
 }
+
+extern int
+js_throw_syntax_errorf (js_env_t *env, const char *code, const char *message, ...);
 
 int
 js_is_exception_pending (js_env_t *env, bool *result) {
