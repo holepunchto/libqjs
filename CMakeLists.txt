@@ -24,6 +24,10 @@ if(NOT TARGET uv)
   add_subdirectory(vendor/libuv EXCLUDE_FROM_ALL)
 endif()
 
+if(NOT TARGET mem)
+  add_subdirectory(vendor/libmem EXCLUDE_FROM_ALL)
+endif()
+
 if(NOT TARGET js)
   add_subdirectory(vendor/libjs EXCLUDE_FROM_ALL)
 endif()
@@ -49,9 +53,11 @@ target_include_directories(
     include
     $<TARGET_PROPERTY:js,INCLUDE_DIRECTORIES>
     ${QUICKJS_INCLUDE_DIR}
+  PRIVATE
+    $<TARGET_PROPERTY:mem,INCLUDE_DIRECTORIES>
 )
 
-add_library(qjs_shared SHARED $<TARGET_OBJECTS:qjs>)
+add_library(qjs_shared SHARED $<TARGET_OBJECTS:qjs> $<TARGET_OBJECTS:mem>)
 
 set_target_properties(
   qjs_shared
@@ -66,7 +72,7 @@ target_link_libraries(
     ${QUICKJS}
 )
 
-add_library(qjs_static STATIC $<TARGET_OBJECTS:qjs>)
+add_library(qjs_static STATIC $<TARGET_OBJECTS:qjs> $<TARGET_OBJECTS:mem>)
 
 set_target_properties(
   qjs_static

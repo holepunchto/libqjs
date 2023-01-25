@@ -1,5 +1,6 @@
 #include <js.h>
 #include <js/ffi.h>
+#include <mem.h>
 #include <quickjs.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -146,6 +147,8 @@ js_create_platform (uv_loop_t *loop, const js_platform_options_t *options, js_pl
   platform->loop = loop;
   platform->options = options ? *options : (js_platform_options_t){};
 
+  mem_init(NULL);
+
   *result = platform;
 
   return 0;
@@ -153,6 +156,8 @@ js_create_platform (uv_loop_t *loop, const js_platform_options_t *options, js_pl
 
 int
 js_destroy_platform (js_platform_t *platform) {
+  mem_destroy();
+
   free(platform);
 
   return 0;
@@ -341,9 +346,40 @@ on_finalizer_finalize (JSRuntime *runtime, JSValue value);
 static void
 on_function_finalize (JSRuntime *runtime, JSValue value);
 
+static void *
+on_malloc (JSMallocState *s, size_t size) {
+  return mem_alloc(size);
+}
+
+static void
+on_free (JSMallocState *s, void *ptr) {
+  mem_free(ptr);
+}
+
+static void *
+on_realloc (JSMallocState *s, void *ptr, size_t size) {
+  return mem_realloc(ptr, size);
+}
+
+static size_t
+on_usable_size (const void *ptr) {
+  return mem_usable_size(ptr);
+}
+
 int
 js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
-  JSRuntime *runtime = JS_NewRuntime();
+  mem_thread_init();
+
+  JSRuntime *runtime = JS_NewRuntime2(
+    &(JSMallocFunctions){
+      .js_malloc = on_malloc,
+      .js_free = on_free,
+      .js_realloc = on_realloc,
+      .js_malloc_usable_size = on_usable_size,
+    },
+    NULL
+  );
+
   JSContext *context = JS_NewContextRaw(runtime);
 
   JS_AddIntrinsicBaseObjects(context);
@@ -443,6 +479,8 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
 
 int
 js_destroy_env (js_env_t *env) {
+  mem_thread_destroy();
+
   js_close_handle_scope(env, env->scope);
 
   JS_FreeContext(env->context);
