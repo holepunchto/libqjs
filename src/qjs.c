@@ -1564,6 +1564,11 @@ js_detach_arraybuffer (js_env_t *env, js_value_t *arraybuffer) {
 }
 
 int
+js_set_arraybuffer_zero_fill_enabled (bool enabled) {
+  return 0;
+}
+
+int
 js_create_typedarray (js_env_t *env, js_typedarray_type_t type, size_t len, js_value_t *arraybuffer, size_t offset, js_value_t **result) {
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor;
