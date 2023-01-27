@@ -746,15 +746,29 @@ js_set_module_export (js_env_t *env, js_module_t *module, js_value_t *name, js_v
 
 int
 js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
-
   env->depth++;
 
-  wrapper->value = JS_EvalFunction(env->context, module->bytecode);
+  JSValue value = JS_EvalFunction(env->context, module->bytecode);
 
   env->depth--;
 
   if (env->depth == 0) run_microtasks(env);
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+
+      JS_Throw(env->context, error);
+    }
+
+    return -1;
+  }
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = value;
 
   *result = wrapper;
 
@@ -1438,6 +1452,8 @@ js_resolve_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolut
 
   JSValue result = JS_Call(env->context, deferred->resolve, global, 1, &resolution->value);
 
+  if (env->depth == 0) run_microtasks(env);
+
   JS_FreeValue(env->context, global);
   JS_FreeValue(env->context, result);
   JS_FreeValue(env->context, deferred->resolve);
@@ -1455,6 +1471,8 @@ js_reject_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resoluti
   JS_DupValue(env->context, resolution->value);
 
   JSValue result = JS_Call(env->context, deferred->reject, global, 1, &resolution->value);
+
+  if (env->depth == 0) run_microtasks(env);
 
   JS_FreeValue(env->context, global);
   JS_FreeValue(env->context, result);
