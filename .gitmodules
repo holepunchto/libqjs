@@ -1,9 +1,12 @@
 [submodule "vendor/libjs"]
 	path = vendor/libjs
 	url = git@github.com:holepunchto/libjs.git
+	shallow = true
 [submodule "vendor/libuv"]
 	path = vendor/libuv
 	url = git@github.com:libuv/libuv.git
+	shallow = true
 [submodule "vendor/libmem"]
 	path = vendor/libmem
 	url = git@github.com:holepunchto/libmem.git
+	shallow = true
