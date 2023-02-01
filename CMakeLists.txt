@@ -8,7 +8,7 @@ endif()
 
 project(qjs C)
 
-if(NOT DEFINED QUICKJS)
+if(NOT TARGET quickjs)
   execute_process(
     COMMAND quickjs-prebuilds-paths --lib
     OUTPUT_VARIABLE QUICKJS
@@ -16,7 +16,21 @@ if(NOT DEFINED QUICKJS)
 
   execute_process(
     COMMAND quickjs-prebuilds-paths --include
-    OUTPUT_VARIABLE QUICKJS_INCLUDE_DIR
+    OUTPUT_VARIABLE QUICKJS_INCLUDE
+  )
+
+  add_library(quickjs STATIC IMPORTED)
+
+  set_target_properties(
+    quickjs
+    PROPERTIES
+    IMPORTED_LOCATION ${QUICKJS}
+  )
+
+  target_include_directories(
+    quickjs
+    INTERFACE
+      ${QUICKJS_INCLUDE}
   )
 endif()
 
@@ -51,10 +65,10 @@ target_include_directories(
   qjs
   PUBLIC
     include
-    $<TARGET_PROPERTY:js,INCLUDE_DIRECTORIES>
-    ${QUICKJS_INCLUDE_DIR}
+    $<TARGET_PROPERTY:js,INTERFACE_INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:quickjs,INTERFACE_INCLUDE_DIRECTORIES>
   PRIVATE
-    $<TARGET_PROPERTY:mem,INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:mem,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
 add_library(qjs_shared SHARED $<TARGET_OBJECTS:qjs> $<TARGET_OBJECTS:mem>)
@@ -69,7 +83,7 @@ target_link_libraries(
   qjs_shared
   PUBLIC
     uv
-    ${QUICKJS}
+    quickjs
 )
 
 add_library(qjs_static STATIC $<TARGET_OBJECTS:qjs> $<TARGET_OBJECTS:mem>)
@@ -84,7 +98,7 @@ target_link_libraries(
   qjs_static
   PUBLIC
     uv_a
-    ${QUICKJS}
+    quickjs
 )
 
 install(TARGETS qjs_shared qjs_static)
