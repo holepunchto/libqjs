@@ -115,6 +115,7 @@ struct js_callback_info_s {
 
 struct js_promise_rejection_s {
   JSValue promise;
+  JSValue reason;
   js_promise_rejection_t *next;
 };
 
@@ -225,23 +226,26 @@ on_uncaught_exception (JSContext *context, JSValue error) {
 }
 
 static void
-on_unhandled_rejection (JSContext *context, JSValue promise) {
+on_unhandled_rejection (JSContext *context, JSValue promise, JSValue reason) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  if (env->on_unhandled_rejection == NULL) {
-    JS_FreeValue(context, promise);
-    return;
-  }
-
-  js_value_t wrapper;
-  wrapper.value = promise;
+  if (env->on_unhandled_rejection == NULL) goto done;
 
   js_handle_scope_t *scope;
   js_open_handle_scope(env, &scope);
 
-  env->on_unhandled_rejection(env, &wrapper, env->unhandled_rejection_data);
+  env->on_unhandled_rejection(
+    env,
+    &(js_value_t){reason},
+    &(js_value_t){promise},
+    env->unhandled_rejection_data
+  );
 
   js_close_handle_scope(env, scope);
+
+done:
+  JS_FreeValue(context, promise);
+  JS_FreeValue(context, reason);
 }
 
 static void
@@ -257,6 +261,7 @@ on_promise_rejection (JSContext *context, JSValueConst promise, JSValueConst rea
     while (next) {
       if (JS_VALUE_GET_OBJ(next->promise) == JS_VALUE_GET_OBJ(promise)) {
         JS_FreeValue(context, next->promise);
+        JS_FreeValue(context, next->reason);
 
         if (prev) prev->next = next->next;
         else env->promise_rejections = next->next;
@@ -271,6 +276,7 @@ on_promise_rejection (JSContext *context, JSValueConst promise, JSValueConst rea
     js_promise_rejection_t *node = malloc(sizeof(js_promise_rejection_t));
 
     node->promise = JS_DupValue(context, promise);
+    node->reason = JS_DupValue(context, reason);
     node->next = env->promise_rejections;
 
     env->promise_rejections = node;
@@ -298,7 +304,7 @@ run_microtasks (js_env_t *env) {
   env->promise_rejections = NULL;
 
   while (next) {
-    on_unhandled_rejection(env->context, next->promise);
+    on_unhandled_rejection(env->context, next->promise, next->reason);
 
     prev = next;
     next = next->next;
