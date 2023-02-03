@@ -794,8 +794,6 @@ static inline void
 js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
   if (JS_IsNull(reference->value)) return;
 
-  JS_FreeValue(env->context, reference->value);
-
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
   finalizer->env = env;
@@ -812,6 +810,8 @@ js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
   JS_DefinePropertyValue(env->context, reference->value, atom, external, 0);
 
   JS_FreeAtom(env->context, atom);
+
+  JS_FreeValue(env->context, reference->value);
 }
 
 static inline void
