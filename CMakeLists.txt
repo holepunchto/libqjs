@@ -9,13 +9,15 @@ endif()
 project(qjs C)
 
 if(NOT TARGET quickjs)
+  find_program(quickjs_prebuilds_paths NAMES quickjs-prebuilds-paths)
+
   execute_process(
-    COMMAND quickjs-prebuilds-paths --lib
+    COMMAND ${quickjs_prebuilds_paths} --lib
     OUTPUT_VARIABLE QUICKJS
   )
 
   execute_process(
-    COMMAND quickjs-prebuilds-paths --include
+    COMMAND ${quickjs_prebuilds_paths} --include
     OUTPUT_VARIABLE QUICKJS_INCLUDE
   )
 
