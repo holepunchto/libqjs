@@ -609,13 +609,21 @@ js_escape_handle (js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t 
 }
 
 int
-js_run_script (js_env_t *env, js_value_t *source, js_value_t **result) {
+js_run_script (js_env_t *env, const char *file, size_t len, js_value_t *source, js_value_t **result) {
   size_t str_len;
   const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
 
   env->depth++;
 
-  JSValue value = JS_Eval(env->context, str, str_len, "<anonymous>", JS_EVAL_TYPE_GLOBAL);
+  if (file == NULL) file = "";
+
+  JSValue value = JS_Eval(
+    env->context,
+    str,
+    str_len,
+    file,
+    JS_EVAL_TYPE_GLOBAL
+  );
 
   env->depth--;
 
@@ -666,6 +674,8 @@ js_create_module (js_env_t *env, const char *name, size_t len, js_value_t *sourc
 
   size_t str_len;
   const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
+
+  if (name == NULL) name = "";
 
   module->bytecode = JS_Eval(
     env->context,
