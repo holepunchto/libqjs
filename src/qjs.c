@@ -609,7 +609,7 @@ js_escape_handle (js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t 
 }
 
 int
-js_run_script (js_env_t *env, const char *file, size_t len, js_value_t *source, js_value_t **result) {
+js_run_script (js_env_t *env, const char *file, size_t len, int offset, js_value_t *source, js_value_t **result) {
   size_t str_len;
   const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
 
@@ -658,7 +658,7 @@ js_run_script (js_env_t *env, const char *file, size_t len, js_value_t *source, 
 }
 
 int
-js_create_module (js_env_t *env, const char *name, size_t len, js_value_t *source, js_module_cb cb, void *data, js_module_t **result) {
+js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, js_module_cb cb, void *data, js_module_t **result) {
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = env->context;
