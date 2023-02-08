@@ -1558,7 +1558,33 @@ js_create_arraybuffer (js_env_t *env, size_t len, void **data, js_value_t **resu
 }
 
 static void
-on_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
+on_unsafe_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
+  mem_free(ptr);
+}
+
+int
+js_create_unsafe_arraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
+  uint8_t *bytes = mem_alloc(len);
+
+  if (data) {
+    *data = bytes;
+  }
+
+  JSValue arraybuffer = JS_NewArrayBuffer(env->context, bytes, len, on_unsafe_arraybuffer_finalize, NULL, false);
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = arraybuffer;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+static void
+on_external_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
   js_finalizer_t *finalizer = (js_finalizer_t *) opaque;
 
   if (finalizer->cb) {
@@ -1577,7 +1603,7 @@ js_create_external_arraybuffer (js_env_t *env, void *data, size_t len, js_finali
   finalizer->cb = finalize_cb;
   finalizer->hint = finalize_hint;
 
-  JSValue arraybuffer = JS_NewArrayBuffer(env->context, (uint8_t *) data, len, on_arraybuffer_finalize, (void *) finalizer, false);
+  JSValue arraybuffer = JS_NewArrayBuffer(env->context, (uint8_t *) data, len, on_external_arraybuffer_finalize, (void *) finalizer, false);
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
