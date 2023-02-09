@@ -13,8 +13,6 @@
 typedef struct js_callback_s js_callback_t;
 typedef struct js_finalizer_s js_finalizer_t;
 typedef struct js_finalizer_list_s js_finalizer_list_t;
-typedef struct js_source_text_module_s js_source_text_module_t;
-typedef struct js_synthetic_module_s js_synthetic_module_t;
 typedef struct js_module_resolver_s js_module_resolver_t;
 typedef struct js_module_evaluator_s js_module_evaluator_t;
 typedef struct js_promise_rejection_s js_promise_rejection_t;
@@ -63,6 +61,7 @@ struct js_module_s {
   JSContext *context;
   JSValue bytecode;
   JSModuleDef *definition;
+  char *name;
   void *data;
 };
 
@@ -662,6 +661,7 @@ js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_va
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = env->context;
+  module->name = strndup(name, len);
   module->data = data;
 
   js_module_resolver_t resolver = {
@@ -718,6 +718,7 @@ js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_valu
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = env->context;
+  module->name = strndup(name, len);
   module->data = data;
   module->definition = JS_NewCModule(env->context, name, on_evaluate_module);
 
@@ -744,7 +745,15 @@ js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_valu
 
 int
 js_delete_module (js_env_t *env, js_module_t *module) {
+  free(module->name);
   free(module);
+
+  return 0;
+}
+
+int
+js_get_module_name (js_env_t *env, js_module_t *module, const char **result) {
+  *result = module->name;
 
   return 0;
 }
