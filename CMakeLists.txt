@@ -9,16 +9,16 @@ endif()
 project(qjs C)
 
 if(NOT TARGET quickjs)
-  find_program(quickjs_prebuilds_paths NAMES quickjs-prebuilds-paths)
+  find_program(quickjs_prebuilds NAMES quickjs-prebuilds)
 
   execute_process(
-    COMMAND ${quickjs_prebuilds_paths} --lib
-    OUTPUT_VARIABLE QUICKJS
+    COMMAND ${quickjs_prebuilds} paths lib
+    OUTPUT_VARIABLE quickjs
   )
 
   execute_process(
-    COMMAND ${quickjs_prebuilds_paths} --include
-    OUTPUT_VARIABLE QUICKJS_INCLUDE
+    COMMAND ${quickjs_prebuilds} paths include
+    OUTPUT_VARIABLE quickjs_include
   )
 
   add_library(quickjs STATIC IMPORTED)
@@ -26,13 +26,13 @@ if(NOT TARGET quickjs)
   set_target_properties(
     quickjs
     PROPERTIES
-    IMPORTED_LOCATION ${QUICKJS}
+    IMPORTED_LOCATION ${quickjs}
   )
 
   target_include_directories(
     quickjs
     INTERFACE
-      ${QUICKJS_INCLUDE}
+      ${quickjs_include}
   )
 endif()
 
