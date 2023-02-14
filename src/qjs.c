@@ -59,6 +59,7 @@ struct js_escapable_handle_scope_s {
 
 struct js_module_s {
   JSContext *context;
+  JSValue source;
   JSValue bytecode;
   JSModuleDef *definition;
   char *name;
@@ -657,39 +658,15 @@ js_run_script (js_env_t *env, const char *file, size_t len, int offset, js_value
 }
 
 int
-js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, js_module_cb cb, void *data, js_module_t **result) {
+js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, js_module_t **result) {
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = env->context;
+  module->source = JS_DupValue(env->context, source->value);
+  module->bytecode = JS_NULL;
+  module->definition = NULL;
   module->name = strndup(name, len);
-  module->data = data;
-
-  js_module_resolver_t resolver = {
-    .module = module,
-    .cb = cb,
-    .next = env->resolvers,
-  };
-
-  env->resolvers = &resolver;
-
-  size_t str_len;
-  const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
-
-  if (name == NULL) name = "";
-
-  module->bytecode = JS_Eval(
-    env->context,
-    str,
-    str_len,
-    name,
-    JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
-  );
-
-  module->definition = (JSModuleDef *) JS_VALUE_GET_PTR(module->bytecode);
-
-  JS_FreeCString(env->context, str);
-
-  env->resolvers = resolver.next;
+  module->data = NULL;
 
   *result = module;
 
@@ -765,6 +742,36 @@ js_set_module_export (js_env_t *env, js_module_t *module, js_value_t *name, js_v
   JS_SetModuleExport(env->context, module->definition, str, JS_DupValue(env->context, value->value));
 
   JS_FreeCString(env->context, str);
+
+  return 0;
+}
+
+int
+js_instantiate_module (js_env_t *env, js_module_t *module, js_module_cb cb, void *data) {
+  js_module_resolver_t resolver = {
+    .module = module,
+    .cb = cb,
+    .next = env->resolvers,
+  };
+
+  env->resolvers = &resolver;
+
+  size_t str_len;
+  const char *str = JS_ToCStringLen(env->context, &str_len, module->source);
+
+  module->bytecode = JS_Eval(
+    env->context,
+    str,
+    str_len,
+    module->name,
+    JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
+  );
+
+  module->definition = (JSModuleDef *) JS_VALUE_GET_PTR(module->bytecode);
+
+  JS_FreeCString(env->context, str);
+
+  env->resolvers = resolver.next;
 
   return 0;
 }
