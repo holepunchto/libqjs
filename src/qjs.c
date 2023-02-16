@@ -336,8 +336,6 @@ static void
 on_check (uv_check_t *handle) {
   js_env_t *env = (js_env_t *) handle->data;
 
-  run_microtasks(env);
-
   if (uv_loop_alive(env->loop)) return;
 
   check_liveness(env);
