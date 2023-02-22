@@ -202,6 +202,8 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
       resolver->data
     );
 
+    if (module == NULL) return NULL;
+
     if (module->definition == NULL) {
       int err = js_instantiate_module(
         env,
@@ -219,13 +221,19 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
       return NULL;
     }
 
+    js_value_t referrer = {
+      .value = JS_NULL,
+    };
+
     module = env->on_dynamic_import(
       env,
       &specifier,
       &assertions,
-      NULL,
+      &referrer,
       env->dynamic_import_data
     );
+
+    if (module == NULL) return NULL;
   }
 
   JS_FreeValue(env->context, specifier.value);
