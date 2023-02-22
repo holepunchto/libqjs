@@ -818,7 +818,9 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_cb cb, void
   size_t str_len;
   const char *str = JS_ToCStringLen(env->context, &str_len, module->source);
 
-  module->bytecode = JS_Eval(
+  env->depth++;
+
+  JSValue bytecode = JS_Eval(
     env->context,
     str,
     str_len,
@@ -826,7 +828,25 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_cb cb, void
     JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
   );
 
-  module->definition = (JSModuleDef *) JS_VALUE_GET_PTR(module->bytecode);
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (JS_IsException(bytecode)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+
+      JS_Throw(env->context, error);
+    }
+
+    return -1;
+  }
+
+  module->bytecode = bytecode;
+
+  module->definition = (JSModuleDef *) JS_VALUE_GET_PTR(bytecode);
 
   JS_FreeCString(env->context, str);
 
