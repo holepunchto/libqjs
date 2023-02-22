@@ -65,18 +65,19 @@ struct js_module_s {
   JSValue bytecode;
   JSModuleDef *definition;
   char *name;
-  void *data;
 };
 
 struct js_module_resolver_s {
   js_module_t *module;
   js_module_cb cb;
+  void *data;
   js_module_resolver_t *next;
 };
 
 struct js_module_evaluator_s {
   js_module_t *module;
   js_synthetic_module_cb cb;
+  void *data;
   js_module_evaluator_t *next;
 };
 
@@ -193,14 +194,12 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
   };
 
   if (resolver) {
-    js_module_t *referrer = resolver->module;
-
     module = resolver->cb(
       env,
       &specifier,
       &assertions,
-      referrer,
-      referrer->data
+      resolver->module,
+      resolver->data
     );
   } else {
     if (env->on_dynamic_import == NULL) {
@@ -214,7 +213,7 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
       &specifier,
       &assertions,
       NULL,
-      NULL
+      env->dynamic_import_data
     );
   }
 
@@ -696,7 +695,6 @@ js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_va
   module->bytecode = JS_NULL;
   module->definition = NULL;
   module->name = strndup(name, len);
-  module->data = NULL;
 
   *result = module;
 
@@ -713,9 +711,7 @@ on_evaluate_module (JSContext *context, JSModuleDef *definition) {
     evaluator = evaluator->next;
   }
 
-  js_module_t *module = evaluator->module;
-
-  evaluator->cb(env, module, module->data);
+  evaluator->cb(env, evaluator->module, evaluator->data);
 
   return 0;
 }
@@ -726,7 +722,6 @@ js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_valu
 
   module->context = env->context;
   module->name = strndup(name, len);
-  module->data = data;
   module->definition = JS_NewCModule(env->context, name, on_evaluate_module);
 
   for (size_t i = 0; i < names_len; i++) {
@@ -741,6 +736,7 @@ js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_valu
 
   evaluator->module = module;
   evaluator->cb = cb;
+  evaluator->data = data;
   evaluator->next = env->evaluators;
 
   env->evaluators = evaluator;
@@ -794,6 +790,7 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_cb cb, void
   js_module_resolver_t resolver = {
     .module = module,
     .cb = cb,
+    .data = data,
     .next = env->resolvers,
   };
 
