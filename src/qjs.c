@@ -1337,10 +1337,16 @@ int
 js_create_function_with_source (js_env_t *env, const char *name, size_t name_len, const char *file, size_t file_len, js_value_t *const args[], size_t args_len, int offset, js_value_t *source, js_value_t **result) {
   const char *str;
 
-  size_t buf_len = strlen("function ");
+  size_t buf_len = 0;
 
-  if (name_len == (size_t) -1) buf_len += strlen(name);
-  else buf_len += name_len;
+  if (name) {
+    buf_len += strlen("const ");
+
+    if (name_len == (size_t) -1) buf_len += strlen(name);
+    else buf_len += name_len;
+
+    buf_len += strlen(" = ");
+  }
 
   buf_len += strlen("(");
 
@@ -1352,25 +1358,33 @@ js_create_function_with_source (js_env_t *env, const char *name, size_t name_len
     JS_FreeCString(env->context, str);
   }
 
-  buf_len += strlen(") {\n");
+  buf_len += strlen(") => {\n");
 
   str = JS_ToCString(env->context, source->value);
   buf_len += strlen(str);
   JS_FreeCString(env->context, str);
 
-  buf_len += strlen("\n}\n");
+  buf_len += strlen("}\n");
 
-  if (name_len == (size_t) -1) buf_len += strlen(name);
-  else buf_len += name_len;
+  if (name) {
+    if (name_len == (size_t) -1) buf_len += strlen(name);
+    else buf_len += name_len;
+
+    buf_len += strlen("\n");
+  }
 
   char *buf = malloc(buf_len + 1 /* NULL */);
 
   buf[0] = '\0';
 
-  strcat(buf, "function ");
+  if (name) {
+    strcat(buf, "const ");
 
-  if (name_len == (size_t) -1) strcat(buf, name);
-  else strncat(buf, name, name_len);
+    if (name_len == (size_t) -1) strcat(buf, name);
+    else strncat(buf, name, name_len);
+
+    strcat(buf, " = ");
+  }
 
   strcat(buf, "(");
 
@@ -1382,16 +1396,20 @@ js_create_function_with_source (js_env_t *env, const char *name, size_t name_len
     JS_FreeCString(env->context, str);
   }
 
-  strcat(buf, ") {\n");
+  strcat(buf, ") => {\n");
 
   str = JS_ToCString(env->context, source->value);
   strcat(buf, str);
   JS_FreeCString(env->context, str);
 
-  strcat(buf, "\n}\n");
+  strcat(buf, "}\n");
 
-  if (name_len == (size_t) -1) strcat(buf, name);
-  else strncat(buf, name, name_len);
+  if (name) {
+    if (name_len == (size_t) -1) strcat(buf, name);
+    else strncat(buf, name, name_len);
+
+    strcat(buf, "\n");
+  }
 
   if (file == NULL) file = "";
 
