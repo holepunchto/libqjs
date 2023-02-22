@@ -1305,10 +1305,10 @@ js_create_function_with_source (js_env_t *env, const char *name, size_t name_len
   JSValue *argv = malloc(sizeof(JSValue) * (args_len + 1));
 
   for (int i = 0; i < args_len; i++) {
-    argv[i] = args[i]->value;
+    argv[i] = JS_DupValue(env->context, args[i]->value);
   }
 
-  argv[args_len] = source->value;
+  argv[args_len] = JS_DupValue(env->context, source->value);
 
   JSValue function = JS_CallConstructor(env->context, constructor, args_len + 1, argv);
 
