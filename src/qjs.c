@@ -1298,6 +1298,37 @@ js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb 
 }
 
 int
+js_create_function_with_source (js_env_t *env, const char *name, size_t name_len, const char *file, size_t file_len, js_value_t *const args[], size_t args_len, int offset, js_value_t *source, js_value_t **result) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Function");
+
+  JSValue *argv = malloc(sizeof(JSValue) * (args_len + 1));
+
+  for (int i = 0; i < args_len; i++) {
+    argv[i] = args[i]->value;
+  }
+
+  argv[args_len] = source->value;
+
+  JSValue function = JS_CallConstructor(env->context, constructor, args_len + 1, argv);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  if (JS_IsException(function)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = function;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
 js_create_function_with_ffi (js_env_t *env, const char *name, size_t len, js_function_cb cb, void *data, js_ffi_function_t *ffi, js_value_t **result) {
   return js_create_function(env, name, len, cb, data, result);
 }
