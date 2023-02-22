@@ -1335,23 +1335,87 @@ js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb 
 
 int
 js_create_function_with_source (js_env_t *env, const char *name, size_t name_len, const char *file, size_t file_len, js_value_t *const args[], size_t args_len, int offset, js_value_t *source, js_value_t **result) {
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Function");
+  const char *str;
 
-  JSValue *argv = malloc(sizeof(JSValue) * (args_len + 1));
+  size_t buf_len = strlen("function ");
+
+  if (name_len == (size_t) -1) buf_len += strlen(name);
+  else buf_len += name_len;
+
+  buf_len += strlen("(");
 
   for (int i = 0; i < args_len; i++) {
-    argv[i] = JS_DupValue(env->context, args[i]->value);
+    if (i != 0) buf_len += strlen(", ");
+
+    str = JS_ToCString(env->context, args[i]->value);
+    buf_len += strlen(str);
+    JS_FreeCString(env->context, str);
   }
 
-  argv[args_len] = JS_DupValue(env->context, source->value);
+  buf_len += strlen(") {\n");
 
-  JSValue function = JS_CallConstructor(env->context, constructor, args_len + 1, argv);
+  str = JS_ToCString(env->context, source->value);
+  buf_len += strlen(str);
+  JS_FreeCString(env->context, str);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+  buf_len += strlen("\n}\n");
 
-  if (JS_IsException(function)) return -1;
+  if (name_len == (size_t) -1) buf_len += strlen(name);
+  else buf_len += name_len;
+
+  char *buf = malloc(buf_len + 1 /* NULL */);
+
+  buf[0] = '\0';
+
+  strcat(buf, "function ");
+
+  if (name_len == (size_t) -1) strcat(buf, name);
+  else strncat(buf, name, name_len);
+
+  strcat(buf, "(");
+
+  for (int i = 0; i < args_len; i++) {
+    if (i != 0) strcat(buf, ", ");
+
+    str = JS_ToCString(env->context, args[i]->value);
+    strcat(buf, str);
+    JS_FreeCString(env->context, str);
+  }
+
+  strcat(buf, ") {\n");
+
+  str = JS_ToCString(env->context, source->value);
+  strcat(buf, str);
+  JS_FreeCString(env->context, str);
+
+  strcat(buf, "\n}\n");
+
+  if (name_len == (size_t) -1) strcat(buf, name);
+  else strncat(buf, name, name_len);
+
+  if (file == NULL) file = "";
+
+  JSValue function = JS_Eval(
+    env->context,
+    buf,
+    buf_len,
+    file,
+    JS_EVAL_TYPE_GLOBAL
+  );
+
+  free(buf);
+
+  if (JS_IsException(function)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+
+      JS_Throw(env->context, error);
+    }
+
+    return -1;
+  }
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
