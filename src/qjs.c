@@ -39,6 +39,8 @@ struct js_env_s {
   void *uncaught_exception_data;
   js_unhandled_rejection_cb on_unhandled_rejection;
   void *unhandled_rejection_data;
+  js_dynamic_import_cb on_dynamic_import;
+  void *dynamic_import_data;
 };
 
 struct js_value_s {
@@ -177,6 +179,11 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
 
   js_module_resolver_t *resolver = env->resolvers;
 
+  js_handle_scope_t *scope;
+  js_open_handle_scope(env, &scope);
+
+  js_module_t *module;
+
   js_value_t specifier = {
     .value = JS_NewString(env->context, name),
   };
@@ -185,22 +192,35 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
     .value = JS_NULL,
   };
 
-  js_module_t *referrer = resolver->module;
+  if (resolver) {
+    js_module_t *referrer = resolver->module;
 
-  js_handle_scope_t *scope;
-  js_open_handle_scope(env, &scope);
+    module = resolver->cb(
+      env,
+      &specifier,
+      &assertions,
+      referrer,
+      referrer->data
+    );
+  } else {
+    if (env->on_dynamic_import == NULL) {
+      js_throw_error(env, NULL, "Dynamic import() is not supported");
 
-  js_module_t *module = resolver->cb(
-    env,
-    &specifier,
-    &assertions,
-    referrer,
-    referrer->data
-  );
+      return NULL;
+    }
 
-  js_close_handle_scope(env, scope);
+    module = env->on_dynamic_import(
+      env,
+      &specifier,
+      &assertions,
+      NULL,
+      NULL
+    );
+  }
 
   JS_FreeValue(env->context, specifier.value);
+
+  js_close_handle_scope(env, scope);
 
   return module->definition;
 }
@@ -449,6 +469,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   env->runtime = runtime;
   env->context = context;
   env->external_memory = 0;
+  env->resolvers = NULL;
 
   env->promise_rejections = NULL;
 
@@ -457,6 +478,9 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
 
   env->on_unhandled_rejection = NULL;
   env->unhandled_rejection_data = NULL;
+
+  env->on_dynamic_import = NULL;
+  env->dynamic_import_data = NULL;
 
   JS_SetRuntimeOpaque(runtime, env);
   JS_SetContextOpaque(context, env);
@@ -507,6 +531,14 @@ int
 js_on_unhandled_rejection (js_env_t *env, js_unhandled_rejection_cb cb, void *data) {
   env->on_unhandled_rejection = cb;
   env->unhandled_rejection_data = data;
+
+  return 0;
+}
+
+int
+js_on_dynamic_import (js_env_t *env, js_dynamic_import_cb cb, void *data) {
+  env->on_dynamic_import = cb;
+  env->dynamic_import_data = data;
 
   return 0;
 }
@@ -623,11 +655,11 @@ js_run_script (js_env_t *env, const char *file, size_t len, int offset, js_value
     JS_EVAL_TYPE_GLOBAL
   );
 
-  env->depth--;
-
   JS_FreeCString(env->context, str);
 
-  if (env->depth == 0) run_microtasks(env);
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
 
   if (JS_IsException(value)) {
     if (env->depth == 0) {
@@ -776,33 +808,27 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_cb cb, void
 
 int
 js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
+  int err;
+
+  js_deferred_t *deferred;
+  err = js_create_promise(env, &deferred, result);
+  if (err < 0) return err;
+
   env->depth++;
 
   JSValue value = JS_EvalFunction(env->context, module->bytecode);
 
+  if (env->depth == 1) run_microtasks(env);
+
   env->depth--;
 
-  if (env->depth == 0) run_microtasks(env);
-
   if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
+    JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
-
-      JS_Throw(env->context, error);
-    }
-
-    return -1;
+    js_reject_deferred(env, deferred, &(js_value_t){error});
+  } else {
+    js_resolve_deferred(env, deferred, &(js_value_t){value});
   }
-
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
-
-  wrapper->value = value;
-
-  *result = wrapper;
-
-  js_attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2442,11 +2468,11 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
 
   JSValue value = JS_Call(env->context, fn->value, recv->value, argc, args);
 
-  env->depth--;
-
   free(args);
 
-  if (env->depth == 0) run_microtasks(env);
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
 
   if (JS_IsException(value)) {
     if (env->depth == 0) {

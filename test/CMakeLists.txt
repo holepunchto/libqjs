@@ -82,14 +82,11 @@ list(APPEND skipped_tests
   create-function-with-ffi-string
   create-function-with-ffi-uint8array
   create-module-import-missing
-  dynamic-import
   dynamic-import-without-handler
-  run-module
   run-module-async
   run-module-cyclic-import
   run-module-nested-import
   run-module-double-nested-import
-  run-module-throw
   wasm
   wasm-async
 )
