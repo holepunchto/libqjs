@@ -201,6 +201,17 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
       resolver->module,
       resolver->data
     );
+
+    if (module->definition == NULL) {
+      int err = js_instantiate_module(
+        env,
+        module,
+        resolver->cb,
+        resolver->data
+      );
+
+      if (err < 0) return NULL;
+    }
   } else {
     if (env->on_dynamic_import == NULL) {
       js_throw_error(env, NULL, "Dynamic import() is not supported");

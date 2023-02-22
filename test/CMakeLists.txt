@@ -84,9 +84,6 @@ list(APPEND skipped_tests
   create-module-import-missing
   dynamic-import-without-handler
   run-module-async
-  run-module-cyclic-import
-  run-module-nested-import
-  run-module-double-nested-import
   wasm
   wasm-async
 )
