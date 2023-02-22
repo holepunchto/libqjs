@@ -766,6 +766,19 @@ js_get_module_name (js_env_t *env, js_module_t *module, const char **result) {
 }
 
 int
+js_get_module_namespace (js_env_t *env, js_module_t *module, js_value_t **result) {
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = JS_GetModuleNamespace(env->context, module->definition);
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
 js_set_module_export (js_env_t *env, js_module_t *module, js_value_t *name, js_value_t *value) {
   const char *str = JS_ToCString(env->context, name->value);
 
