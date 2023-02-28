@@ -247,20 +247,19 @@ static void
 on_uncaught_exception (JSContext *context, JSValue error) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  if (env->on_uncaught_exception == NULL) {
-    JS_FreeValue(context, error);
-    return;
+  if (env->on_uncaught_exception) {
+    js_value_t wrapper;
+    wrapper.value = error;
+
+    js_handle_scope_t *scope;
+    js_open_handle_scope(env, &scope);
+
+    env->on_uncaught_exception(env, &wrapper, env->uncaught_exception_data);
+
+    js_close_handle_scope(env, scope);
+  } else {
+    JS_Throw(context, error);
   }
-
-  js_value_t wrapper;
-  wrapper.value = error;
-
-  js_handle_scope_t *scope;
-  js_open_handle_scope(env, &scope);
-
-  env->on_uncaught_exception(env, &wrapper, env->uncaught_exception_data);
-
-  js_close_handle_scope(env, scope);
 }
 
 static void
@@ -684,8 +683,6 @@ js_run_script (js_env_t *env, const char *file, size_t len, int offset, js_value
       JSValue error = JS_GetException(env->context);
 
       on_uncaught_exception(env->context, JS_DupValue(env->context, error));
-
-      JS_Throw(env->context, error);
     }
 
     return -1;
@@ -740,8 +737,10 @@ js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_valu
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = env->context;
-  module->name = strndup(name, len);
+  module->source = JS_NULL;
+  module->bytecode = JS_NULL;
   module->definition = JS_NewCModule(env->context, name, on_evaluate_module);
+  module->name = strndup(name, len);
 
   for (size_t i = 0; i < names_len; i++) {
     const char *str = JS_ToCString(env->context, export_names[i]->value);
@@ -806,6 +805,8 @@ js_set_module_export (js_env_t *env, js_module_t *module, js_value_t *name, js_v
 
 int
 js_instantiate_module (js_env_t *env, js_module_t *module, js_module_cb cb, void *data) {
+  if (JS_IsNull(module->source)) return 0;
+
   js_module_resolver_t resolver = {
     .module = module,
     .cb = cb,
@@ -837,8 +838,6 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_cb cb, void
       JSValue error = JS_GetException(env->context);
 
       on_uncaught_exception(env->context, JS_DupValue(env->context, error));
-
-      JS_Throw(env->context, error);
     }
 
     return -1;
@@ -1428,8 +1427,6 @@ js_create_function_with_source (js_env_t *env, const char *name, size_t name_len
       JSValue error = JS_GetException(env->context);
 
       on_uncaught_exception(env->context, JS_DupValue(env->context, error));
-
-      JS_Throw(env->context, error);
     }
 
     return -1;
@@ -2641,8 +2638,6 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
       JSValue error = JS_GetException(env->context);
 
       on_uncaught_exception(env->context, JS_DupValue(env->context, error));
-
-      JS_Throw(env->context, error);
     }
 
     return -1;
