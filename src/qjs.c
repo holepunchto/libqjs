@@ -568,6 +568,13 @@ js_get_env_loop (js_env_t *env, uv_loop_t **result) {
 }
 
 int
+js_get_env_platform (js_env_t *env, js_platform_t **result) {
+  *result = env->platform;
+
+  return 0;
+}
+
+int
 js_open_handle_scope (js_env_t *env, js_handle_scope_t **result) {
   js_handle_scope_t *scope = malloc(sizeof(js_handle_scope_t));
 
