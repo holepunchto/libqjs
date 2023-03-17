@@ -67,7 +67,7 @@ target_include_directories(
     $<TARGET_PROPERTY:mem,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
-add_library(qjs_shared SHARED $<TARGET_OBJECTS:qjs> $<TARGET_OBJECTS:mem>)
+add_library(qjs_shared SHARED $<TARGET_OBJECTS:qjs>)
 
 set_target_properties(
   qjs_shared
@@ -81,9 +81,10 @@ target_link_libraries(
   PUBLIC
     uv
     quickjs
+    mem_shared
 )
 
-add_library(qjs_static STATIC $<TARGET_OBJECTS:qjs> $<TARGET_OBJECTS:mem>)
+add_library(qjs_static STATIC $<TARGET_OBJECTS:qjs>)
 
 set_target_properties(
   qjs_static
@@ -96,6 +97,7 @@ target_link_libraries(
   PUBLIC
     uv_a
     quickjs
+    mem_static
 )
 
 install(TARGETS qjs_shared qjs_static)

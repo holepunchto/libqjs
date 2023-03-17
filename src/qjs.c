@@ -23,6 +23,7 @@ struct js_platform_s {
 };
 
 struct js_env_s {
+  mem_heap_t *heap;
   uv_loop_t *loop;
   uv_prepare_t prepare;
   uv_check_t check;
@@ -151,8 +152,6 @@ js_create_platform (uv_loop_t *loop, const js_platform_options_t *options, js_pl
   platform->loop = loop;
   platform->options = options ? *options : (js_platform_options_t){};
 
-  mem_init(NULL);
-
   *result = platform;
 
   return 0;
@@ -160,8 +159,6 @@ js_create_platform (uv_loop_t *loop, const js_platform_options_t *options, js_pl
 
 int
 js_destroy_platform (js_platform_t *platform) {
-  mem_destroy();
-
   free(platform);
 
   return 0;
@@ -389,7 +386,7 @@ on_function_finalize (JSRuntime *runtime, JSValue value);
 
 static void *
 on_malloc (JSMallocState *s, size_t size) {
-  return mem_alloc(size);
+  return mem_alloc((mem_heap_t *) s->opaque, size);
 }
 
 static void
@@ -399,7 +396,7 @@ on_free (JSMallocState *s, void *ptr) {
 
 static void *
 on_realloc (JSMallocState *s, void *ptr, size_t size) {
-  return mem_realloc(ptr, size);
+  return mem_realloc((mem_heap_t *) s->opaque, ptr, size);
 }
 
 static size_t
@@ -409,7 +406,8 @@ on_usable_size (const void *ptr) {
 
 int
 js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
-  mem_thread_init();
+  mem_heap_t *heap;
+  mem_heap_init(NULL, &heap);
 
   JSRuntime *runtime = JS_NewRuntime2(
     &(JSMallocFunctions){
@@ -418,7 +416,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
       .js_realloc = on_realloc,
       .js_malloc_usable_size = on_usable_size,
     },
-    NULL
+    (void *) heap
   );
 
   JSContext *context = JS_NewContextRaw(runtime);
@@ -480,6 +478,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
 
   js_env_t *env = malloc(sizeof(js_env_t));
 
+  env->heap = heap;
   env->loop = loop;
   env->platform = platform;
   env->depth = 0;
@@ -524,12 +523,12 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
 
 int
 js_destroy_env (js_env_t *env) {
-  mem_thread_destroy();
-
   js_close_handle_scope(env, env->scope);
 
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
+
+  mem_heap_destroy(env->heap);
 
   free(env);
 
@@ -1770,7 +1769,7 @@ on_unsafe_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
 
 int
 js_create_unsafe_arraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
-  uint8_t *bytes = mem_alloc(len);
+  uint8_t *bytes = mem_alloc(env->heap, len);
 
   if (data) {
     *data = bytes;
