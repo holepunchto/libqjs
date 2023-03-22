@@ -90,6 +90,7 @@ set_target_properties(
   qjs_static
   PROPERTIES
   OUTPUT_NAME qjs
+  PREFIX lib
 )
 
 target_link_libraries(
