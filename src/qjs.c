@@ -8,7 +8,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <utf.h>
 #include <uv.h>
+#include <wchar.h>
 
 typedef struct js_callback_s js_callback_t;
 typedef struct js_finalizer_s js_finalizer_t;
@@ -1220,14 +1222,35 @@ js_create_bigint_uint64 (js_env_t *env, uint64_t value, js_value_t **result) {
 }
 
 int
-js_create_string_utf8 (js_env_t *env, const char *str, size_t len, js_value_t **result) {
+js_create_string_utf8 (js_env_t *env, const utf8_t *str, size_t len, js_value_t **result) {
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
   if (len == (size_t) -1) {
-    wrapper->value = JS_NewString(env->context, str);
+    wrapper->value = JS_NewString(env->context, (char *) str);
   } else {
-    wrapper->value = JS_NewStringLen(env->context, str, len);
+    wrapper->value = JS_NewStringLen(env->context, (char *) str, len);
   }
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_create_string_utf16le (js_env_t *env, const utf16_t *str, size_t len, js_value_t **result) {
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  if (len == (size_t) -1) len = wcslen((wchar_t *) str);
+
+  size_t utf8_len = utf8_length_from_utf16le(str, len);
+
+  utf8_t *utf8 = malloc(len);
+
+  utf16le_convert_to_utf8(str, len, utf8);
+
+  wrapper->value = JS_NewStringLen(env->context, (char *) utf8, utf8_len);
 
   *result = wrapper;
 
@@ -2241,19 +2264,49 @@ js_get_value_bigint_uint64 (js_env_t *env, js_value_t *value, uint64_t *result) 
 }
 
 int
-js_get_value_string_utf8 (js_env_t *env, js_value_t *value, char *str, size_t len, size_t *result) {
+js_get_value_string_utf8 (js_env_t *env, js_value_t *value, utf8_t *str, size_t len, size_t *result) {
   size_t cstr_len;
   const char *cstr = JS_ToCStringLen(env->context, &cstr_len, value->value);
 
   if (str == NULL) {
     *result = cstr_len;
   } else if (len != 0) {
-    int written = cstr_len < len ? cstr_len : len;
+    size_t written = cstr_len < len ? cstr_len : len;
 
     memcpy(str, cstr, written);
 
-    if (cstr_len < len) {
-      str[cstr_len] = '\0';
+    if (written < len) {
+      str[written] = '\0';
+    }
+
+    if (result) {
+      *result = written;
+    }
+  } else if (result) {
+    *result = 0;
+  }
+
+  JS_FreeCString(env->context, cstr);
+
+  return 0;
+}
+
+int
+js_get_value_string_utf16le (js_env_t *env, js_value_t *value, utf16_t *str, size_t len, size_t *result) {
+  size_t cstr_len;
+  const char *cstr = JS_ToCStringLen(env->context, &cstr_len, value->value);
+
+  size_t utf16_len = utf16_length_from_utf8((utf8_t *) cstr, cstr_len);
+
+  if (str == NULL) {
+    *result = utf16_len;
+  } else if (len != 0) {
+    size_t written = utf16_len < len ? utf16_len : len;
+
+    utf8_convert_to_utf16le((utf8_t *) cstr, cstr_len, str);
+
+    if (written < len) {
+      str[written] = L'\0';
     }
 
     if (result) {
