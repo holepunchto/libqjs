@@ -407,7 +407,7 @@ on_usable_size (const void *ptr) {
 }
 
 int
-js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
+js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *options, js_env_t **result) {
   mem_heap_t *heap;
   mem_heap_init(NULL, &heap);
 
@@ -440,15 +440,19 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, js_env_t **result) {
   JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
   JS_SetHostPromiseRejectionTracker(runtime, on_promise_rejection, NULL);
 
-  uint64_t constrained_memory = uv_get_constrained_memory();
-  uint64_t total_memory = uv_get_total_memory();
+  if (options && options->memory_limit) {
+    JS_SetMemoryLimit(runtime, options->memory_limit);
+  } else {
+    uint64_t constrained_memory = uv_get_constrained_memory();
+    uint64_t total_memory = uv_get_total_memory();
 
-  if (constrained_memory > 0 && constrained_memory < total_memory) {
-    total_memory = constrained_memory;
-  }
+    if (constrained_memory > 0 && constrained_memory < total_memory) {
+      total_memory = constrained_memory;
+    }
 
-  if (total_memory > 0) {
-    JS_SetMemoryLimit(runtime, total_memory);
+    if (total_memory > 0) {
+      JS_SetMemoryLimit(runtime, total_memory);
+    }
   }
 
   JS_NewClass(
