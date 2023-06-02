@@ -8,6 +8,8 @@ list(APPEND tests
   call-function-microtask
   call-function-microtask-nested
   call-function-throw
+  create-arraybuffer
+  create-arraybuffer-with-backing-store
   create-external
   create-external-with-finalizer
   create-external-arraybuffer
@@ -30,6 +32,8 @@ list(APPEND tests
   create-promise-resolve
   create-reference
   create-reference-weak
+  create-sharedarraybuffer
+  create-sharedarraybuffer-with-backing-store
   create-string-utf8
   create-string-utf8-with-null
   create-unsafe-arraybuffer
@@ -57,6 +61,7 @@ list(APPEND tests
   run-script-ignore-return
   run-script-throw
   set-named-property
+  threads
   typeof-bigint
   typeof-boolean
   typeof-external

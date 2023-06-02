@@ -3,6 +3,7 @@
 #include <mem.h>
 #include <quickjs.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -17,6 +18,7 @@ typedef struct js_finalizer_s js_finalizer_t;
 typedef struct js_finalizer_list_s js_finalizer_list_t;
 typedef struct js_module_resolver_s js_module_resolver_t;
 typedef struct js_module_evaluator_s js_module_evaluator_t;
+typedef struct js_arraybuffer_header_s js_arraybuffer_header_t;
 typedef struct js_promise_rejection_s js_promise_rejection_t;
 
 struct js_platform_s {
@@ -117,6 +119,20 @@ struct js_callback_info_s {
   int argc;
   JSValue *argv;
   JSValue self;
+};
+
+struct js_arraybuffer_header_s {
+  atomic_int references;
+  js_finalizer_t *finalizer;
+  size_t len;
+  uint8_t data[];
+};
+
+struct js_arraybuffer_backing_store_s {
+  atomic_int references;
+  size_t len;
+  uint8_t *data;
+  JSValue owner;
 };
 
 struct js_promise_rejection_s {
@@ -406,6 +422,32 @@ on_usable_size (const void *ptr) {
   return mem_usable_size(ptr);
 }
 
+static void *
+on_shared_malloc (void *opaque, size_t size) {
+  js_arraybuffer_header_t *header = mem_alloc((mem_heap_t *) opaque, sizeof(js_arraybuffer_header_t) + size);
+
+  header->references = 1;
+  header->len = size;
+
+  return header->data;
+}
+
+static void
+on_shared_free (void *opaque, void *ptr) {
+  js_arraybuffer_header_t *header = (js_arraybuffer_header_t *) ((char *) ptr - sizeof(js_arraybuffer_header_t));
+
+  if (--header->references == 0) {
+    mem_free(header);
+  }
+}
+
+static void
+on_shared_dup (void *opaque, void *ptr) {
+  js_arraybuffer_header_t *header = (js_arraybuffer_header_t *) ((char *) ptr - sizeof(js_arraybuffer_header_t));
+
+  header->references++;
+}
+
 int
 js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *options, js_env_t **result) {
   mem_heap_t *heap;
@@ -419,6 +461,16 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
       .js_malloc_usable_size = on_usable_size,
     },
     (void *) heap
+  );
+
+  JS_SetSharedArrayBufferFunctions(
+    runtime,
+    &(JSSharedArrayBufferFunctions){
+      .sab_alloc = on_shared_malloc,
+      .sab_free = on_shared_free,
+      .sab_dup = on_shared_dup,
+      .sab_opaque = (void *) heap,
+    }
   );
 
   JSContext *context = JS_NewContextRaw(runtime);
@@ -1768,15 +1820,56 @@ js_get_promise_result (js_env_t *env, js_value_t *promise, js_value_t **result) 
   return 0;
 }
 
+static void
+on_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
+  mem_free(ptr);
+}
+
 int
 js_create_arraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
-  JSValue arraybuffer = JS_NewArrayBufferCopy(env->context, NULL, len);
+  uint8_t *bytes = mem_zalloc(env->heap, len);
 
   if (data) {
-    size_t len;
-
-    *data = JS_GetArrayBuffer(env->context, &len, arraybuffer);
+    *data = bytes;
   }
+
+  JSValue arraybuffer = JS_NewArrayBuffer(env->context, bytes, len, on_arraybuffer_finalize, NULL, false);
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = arraybuffer;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+static void
+on_backed_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
+  js_arraybuffer_backing_store_t *backing_store = (js_arraybuffer_backing_store_t *) opaque;
+
+  if (--backing_store->references == 0) {
+    JS_FreeValueRT(rt, backing_store->owner);
+
+    free(backing_store);
+  }
+}
+
+int
+js_create_arraybuffer_with_backing_store (js_env_t *env, js_arraybuffer_backing_store_t *backing_store, void **data, size_t *len, js_value_t **result) {
+  backing_store->references++;
+
+  if (data) {
+    *data = backing_store->data;
+  }
+
+  if (len) {
+    *len = backing_store->len;
+  }
+
+  JSValue arraybuffer = JS_NewArrayBuffer(env->context, backing_store->data, backing_store->len, on_backed_arraybuffer_finalize, backing_store, false);
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -1851,6 +1944,119 @@ js_create_external_arraybuffer (js_env_t *env, void *data, size_t len, js_finali
 int
 js_detach_arraybuffer (js_env_t *env, js_value_t *arraybuffer) {
   JS_DetachArrayBuffer(env->context, arraybuffer->value);
+
+  return 0;
+}
+
+int
+js_get_arraybuffer_backing_store (js_env_t *env, js_value_t *arraybuffer, js_arraybuffer_backing_store_t **result) {
+  js_arraybuffer_backing_store_t *backing_store = malloc(sizeof(js_arraybuffer_backing_store_t));
+
+  backing_store->references = 1;
+
+  backing_store->data = JS_GetArrayBuffer(env->context, &backing_store->len, arraybuffer->value);
+
+  backing_store->owner = JS_DupValue(env->context, arraybuffer->value);
+
+  *result = backing_store;
+
+  return 0;
+}
+
+int
+js_create_sharedarraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
+  js_arraybuffer_header_t *header = mem_zalloc(env->heap, sizeof(js_arraybuffer_header_t) + len);
+
+  header->references = 0;
+  header->finalizer = NULL;
+  header->len = len;
+
+  if (data) {
+    *data = header->data;
+  }
+
+  JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, header->data, header->len, NULL, NULL, true);
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = sharedarraybuffer;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_create_sharedarraybuffer_with_backing_store (js_env_t *env, js_arraybuffer_backing_store_t *backing_store, void **data, size_t *len, js_value_t **result) {
+  if (data) {
+    *data = backing_store->data;
+  }
+
+  if (len) {
+    *len = backing_store->len;
+  }
+
+  JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, backing_store->data, backing_store->len, NULL, NULL, true);
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = sharedarraybuffer;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_create_unsafe_sharedarraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
+  js_arraybuffer_header_t *header = mem_alloc(env->heap, sizeof(js_arraybuffer_header_t) + len);
+
+  header->references = 0;
+  header->len = len;
+
+  if (data) {
+    *data = header->data;
+  }
+
+  JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, header->data, header->len, NULL, NULL, true);
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = sharedarraybuffer;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_get_sharedarraybuffer_backing_store (js_env_t *env, js_value_t *sharedarraybuffer, js_arraybuffer_backing_store_t **result) {
+  js_arraybuffer_backing_store_t *backing_store = malloc(sizeof(js_arraybuffer_backing_store_t));
+
+  backing_store->references = 1;
+
+  backing_store->data = JS_GetArrayBuffer(env->context, &backing_store->len, sharedarraybuffer->value);
+
+  backing_store->owner = JS_NULL;
+
+  *result = backing_store;
+
+  return 0;
+}
+
+int
+js_release_arraybuffer_backing_store (js_env_t *env, js_arraybuffer_backing_store_t *backing_store) {
+  if (--backing_store->references == 0) {
+    JS_FreeValue(env->context, backing_store->owner);
+
+    free(backing_store);
+  }
 
   return 0;
 }
@@ -2106,10 +2312,23 @@ js_is_detached_arraybuffer (js_env_t *env, js_value_t *value, bool *result) {
 }
 
 int
+js_is_sharedarraybuffer (js_env_t *env, js_value_t *value, bool *result) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "SharedArrayBuffer");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
 js_is_typedarray (js_env_t *env, js_value_t *value, bool *result) {
   JSValue global = JS_GetGlobalObject(env->context);
 
-#define check_type(class) \
+#define V(class) \
   { \
     JSValue constructor = JS_GetPropertyStr(env->context, global, class); \
 \
@@ -2124,19 +2343,19 @@ js_is_typedarray (js_env_t *env, js_value_t *value, bool *result) {
     JS_FreeValue(env->context, constructor); \
   }
 
-  check_type("Int8Array");
-  check_type("Uint8Array");
-  check_type("Uint8ClampedArray");
-  check_type("Int16Array");
-  check_type("Uint16Array");
-  check_type("Int32Array");
-  check_type("Uint32Array");
-  check_type("Float32Array");
-  check_type("Float64Array");
-  check_type("BigInt64Array");
-  check_type("BigUint64Array");
+  V("Int8Array");
+  V("Uint8Array");
+  V("Uint8ClampedArray");
+  V("Int16Array");
+  V("Uint16Array");
+  V("Int32Array");
+  V("Uint32Array");
+  V("Float32Array");
+  V("Float64Array");
+  V("BigInt64Array");
+  V("BigUint64Array");
 
-#undef check_type
+#undef V
 
   *result = false;
 
@@ -2567,7 +2786,7 @@ js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_typ
   if (ptype) {
     JSValue global = JS_GetGlobalObject(env->context);
 
-#define check_type(class, type) \
+#define V(class, type) \
   { \
     JSValue constructor = JS_GetPropertyStr(env->context, global, class); \
 \
@@ -2582,19 +2801,19 @@ js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_typ
     JS_FreeValue(env->context, constructor); \
   }
 
-    check_type("Int8Array", js_int8_array);
-    check_type("Uint8Array", js_uint8_array);
-    check_type("Uint8ClampedArray", js_uint8_clamped_array);
-    check_type("Int16Array", js_int16_array);
-    check_type("Uint16Array", js_uint16_array);
-    check_type("Int32Array", js_int32_array);
-    check_type("Uint32Array", js_uint32_array);
-    check_type("Float32Array", js_float32_array);
-    check_type("Float64Array", js_float64_array);
-    check_type("BigInt64Array", js_bigint64_array);
-    check_type("BigUint64Array", js_biguint64_array);
+    V("Int8Array", js_int8_array);
+    V("Uint8Array", js_uint8_array);
+    V("Uint8ClampedArray", js_uint8_clamped_array);
+    V("Int16Array", js_int16_array);
+    V("Uint16Array", js_uint16_array);
+    V("Int32Array", js_int32_array);
+    V("Uint32Array", js_uint32_array);
+    V("Float32Array", js_float32_array);
+    V("Float64Array", js_float64_array);
+    V("BigInt64Array", js_bigint64_array);
+    V("BigUint64Array", js_biguint64_array);
 
-#undef check_type
+#undef V
 
   done:
     JS_FreeValue(env->context, global);
