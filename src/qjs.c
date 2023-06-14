@@ -2948,13 +2948,23 @@ js_throw (js_env_t *env, js_value_t *error) {
 
 int
 js_vformat (char **result, size_t *size, const char *message, va_list args) {
-  int res = vsnprintf(NULL, 0, message, args);
+  va_list args_copy;
+  va_copy(args_copy, args);
+
+  int res = vsnprintf(NULL, 0, message, args_copy);
+
+  va_end(args_copy);
+
   if (res < 0) return res;
 
   *size = res + 1 /* NULL */;
   *result = malloc(*size);
 
-  vsnprintf(*result, *size, message, args);
+  va_copy(args_copy, args);
+
+  vsnprintf(*result, *size, message, args_copy);
+
+  va_end(args_copy);
 
   return 0;
 }
