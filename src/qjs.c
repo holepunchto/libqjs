@@ -118,7 +118,8 @@ struct js_callback_info_s {
   js_callback_t *callback;
   int argc;
   JSValue *argv;
-  JSValue self;
+  JSValue receiver;
+  JSValue new_target;
 };
 
 struct js_arraybuffer_header_s {
@@ -1357,7 +1358,7 @@ on_function_finalize (JSRuntime *runtime, JSValue value) {
 }
 
 static JSValue
-on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst *argv, int magic, JSValue *data) {
+on_function_call (JSContext *context, JSValueConst receiver, int argc, JSValueConst *argv, int magic, JSValue *data) {
   js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_function_data_class_id);
 
   js_env_t *env = callback->env;
@@ -1366,7 +1367,8 @@ on_function_call (JSContext *context, JSValueConst self, int argc, JSValueConst 
     .callback = callback,
     .argc = argc,
     .argv = argv,
-    .self = self,
+    .receiver = receiver,
+    .new_target = JS_NULL,
   };
 
   js_handle_scope_t *scope;
@@ -2572,6 +2574,19 @@ js_get_array_length (js_env_t *env, js_value_t *value, uint32_t *result) {
 }
 
 int
+js_get_prototype (js_env_t *env, js_value_t *object, js_value_t **result) {
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = JS_GetPrototype(env->context, object->value);
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
 js_get_property (js_env_t *env, js_value_t *object, js_value_t *key, js_value_t **result) {
   JSAtom atom = JS_ValueToAtom(env->context, key->value);
 
@@ -2712,7 +2727,7 @@ js_delete_element (js_env_t *env, js_value_t *object, uint32_t index, bool *resu
 }
 
 int
-js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *argc, js_value_t *argv[], js_value_t **self, void **data) {
+js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *argc, js_value_t *argv[], js_value_t **receiver, void **data) {
   if (argv) {
     size_t i = 0, n = info->argc < *argc ? info->argc : *argc;
 
@@ -2745,12 +2760,12 @@ js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *arg
     *argc = info->argc;
   }
 
-  if (self) {
+  if (receiver) {
     js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-    wrapper->value = JS_DupValue(env->context, info->self);
+    wrapper->value = JS_DupValue(env->context, info->receiver);
 
-    *self = wrapper;
+    *receiver = wrapper;
 
     js_attach_to_handle_scope(env, env->scope, wrapper);
   }
@@ -2758,6 +2773,19 @@ js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *arg
   if (data) {
     *data = info->callback->data;
   }
+
+  return 0;
+}
+
+int
+js_get_new_target (js_env_t *env, const js_callback_info_t *info, js_value_t **result) {
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = JS_DupValue(env->context, info->new_target);
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
