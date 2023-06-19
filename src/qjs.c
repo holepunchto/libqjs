@@ -150,6 +150,7 @@ const char *js_platform_version = NULL;
 static JSClassID js_external_data_class_id;
 static JSClassID js_finalizer_data_class_id;
 static JSClassID js_function_data_class_id;
+static JSClassID js_constructor_data_class_id;
 
 static uv_once_t js_platform_init = UV_ONCE_INIT;
 
@@ -161,6 +162,7 @@ on_platform_init () {
   JS_NewClassID(&js_external_data_class_id);
   JS_NewClassID(&js_finalizer_data_class_id);
   JS_NewClassID(&js_function_data_class_id);
+  JS_NewClassID(&js_constructor_data_class_id);
 }
 
 int
@@ -404,6 +406,9 @@ on_finalizer_finalize (JSRuntime *runtime, JSValue value);
 static void
 on_function_finalize (JSRuntime *runtime, JSValue value);
 
+static void
+on_constructor_finalize (JSRuntime *runtime, JSValue value);
+
 static void *
 on_malloc (JSMallocState *s, size_t size) {
   return mem_alloc((mem_heap_t *) s->opaque, size);
@@ -533,6 +538,15 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
     &(JSClassDef){
       .class_name = "Function",
       .finalizer = on_function_finalize,
+    }
+  );
+
+  JS_NewClass(
+    runtime,
+    js_constructor_data_class_id,
+    &(JSClassDef){
+      .class_name = "Constructor",
+      .finalizer = on_constructor_finalize,
     }
   );
 
@@ -1085,9 +1099,135 @@ js_get_reference_value (js_env_t *env, js_ref_t *reference, js_value_t **result)
   return 0;
 }
 
+static void
+on_constructor_finalize (JSRuntime *runtime, JSValue value) {
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(value, js_constructor_data_class_id);
+
+  free(callback);
+}
+
+static JSValue
+on_constructor_call (JSContext *context, JSValueConst new_target, int argc, JSValueConst *argv, int magic, JSValue *data) {
+  JSValue prototype = JS_GetPropertyStr(context, new_target, "prototype");
+
+  JSValue receiver = JS_NewObjectProto(context, prototype);
+
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_constructor_data_class_id);
+
+  js_env_t *env = callback->env;
+
+  js_callback_info_t callback_info = {
+    .callback = callback,
+    .argc = argc,
+    .argv = argv,
+    .receiver = receiver,
+    .new_target = new_target,
+  };
+
+  js_handle_scope_t *scope;
+  js_open_handle_scope(env, &scope);
+
+  js_value_t *result = callback->cb(env, &callback_info);
+
+  JSValue value, error;
+
+  if (result == NULL) value = JS_UNDEFINED;
+  else value = JS_DupValue(env->context, result->value);
+
+  error = JS_GetException(env->context);
+
+  if (!JS_IsNull(error)) {
+    JS_FreeValue(env->context, value);
+
+    value = JS_Throw(env->context, JS_DupValue(env->context, error));
+  }
+
+  js_close_handle_scope(env, scope);
+
+  return receiver;
+}
+
 int
 js_define_class (js_env_t *env, const char *name, size_t len, js_function_cb constructor, void *data, js_property_descriptor_t const properties[], size_t properties_len, js_value_t **result) {
-  return -1;
+  int err;
+
+  js_callback_t *callback = malloc(sizeof(js_callback_t));
+
+  callback->env = env;
+  callback->cb = constructor;
+  callback->data = data;
+
+  JSValue external = JS_NewObjectClass(env->context, js_constructor_data_class_id);
+
+  JS_SetOpaque(external, callback);
+
+  JSValue class = JS_NewCFunctionData(env->context, on_constructor_call, 0, 0, 1, &external);
+
+  JS_SetConstructorBit(env->context, class, true);
+
+  JSValue prototype = JS_NewObject(env->context);
+
+  JS_SetConstructor(env->context, class, prototype);
+
+  size_t instance_properties_len = 0;
+  size_t static_properties_len = 0;
+
+  for (size_t i = 0; i < properties_len; i++) {
+    const js_property_descriptor_t *property = &properties[i];
+
+    if ((property->attributes & js_static) == 0) {
+      instance_properties_len++;
+    } else {
+      static_properties_len++;
+    }
+  }
+
+  if (instance_properties_len) {
+    js_property_descriptor_t *instance_properties = malloc(sizeof(js_property_descriptor_t) * instance_properties_len);
+
+    for (size_t i = 0, j = 0; i < properties_len; i++) {
+      const js_property_descriptor_t *property = &properties[i];
+
+      if ((property->attributes & js_static) == 0) {
+        instance_properties[j++] = *property;
+      }
+    }
+
+    err = js_define_properties(env, &(js_value_t){prototype}, instance_properties, instance_properties_len);
+    assert(err == 0);
+
+    free(instance_properties);
+  }
+
+  if (static_properties_len) {
+    js_property_descriptor_t *static_properties = malloc(sizeof(js_property_descriptor_t) * static_properties_len);
+
+    for (size_t i = 0, j = 0; i < properties_len; i++) {
+      const js_property_descriptor_t *property = &properties[i];
+
+      if ((property->attributes & js_static) != 0) {
+        static_properties[j++] = *property;
+      }
+    }
+
+    err = js_define_properties(env, &(js_value_t){class}, static_properties, static_properties_len);
+    assert(err == 0);
+
+    free(static_properties);
+  }
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = class;
+
+  JS_FreeValue(env->context, external);
+  JS_FreeValue(env->context, prototype);
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
 }
 
 int
@@ -1097,7 +1237,7 @@ js_define_properties (js_env_t *env, js_value_t *object, js_property_descriptor_
   for (size_t i = 0; i < properties_len; i++) {
     const js_property_descriptor_t *property = &properties[i];
 
-    int flags = 0;
+    int flags = JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE | JS_PROP_HAS_CONFIGURABLE;
 
     if ((property->attributes & js_writable) != 0 || property->getter || property->setter) {
       flags |= JS_PROP_WRITABLE;
@@ -1111,34 +1251,40 @@ js_define_properties (js_env_t *env, js_value_t *object, js_property_descriptor_
       flags |= JS_PROP_CONFIGURABLE;
     }
 
-    JSValue value = JS_NULL, getter = JS_NULL, setter = JS_NULL;
+    JSValue value = JS_UNDEFINED, getter = JS_UNDEFINED, setter = JS_UNDEFINED;
 
     if (property->getter || property->setter) {
-      flags |= JS_PROP_GETSET;
-
       if (property->getter) {
+        flags |= JS_PROP_HAS_GET;
+
         js_value_t *fn;
         err = js_create_function(env, property->name, -1, property->getter, property->data, &fn);
         assert(err == 0);
 
-        getter = fn->value;
+        getter = JS_DupValue(env->context, fn->value);
       }
 
       if (property->setter) {
+        flags |= JS_PROP_HAS_SET;
+
         js_value_t *fn;
         err = js_create_function(env, property->name, -1, property->setter, property->data, &fn);
         assert(err == 0);
 
-        setter = fn->value;
+        setter = JS_DupValue(env->context, fn->value);
       }
     } else if (property->method) {
+      flags |= JS_PROP_HAS_VALUE;
+
       js_value_t *fn;
       err = js_create_function(env, property->name, -1, property->method, property->data, &fn);
       assert(err == 0);
 
-      value = fn->value;
+      value = JS_DupValue(env->context, fn->value);
     } else {
-      value = property->value->value;
+      flags |= JS_PROP_HAS_VALUE;
+
+      value = JS_DupValue(env->context, property->value->value);
     }
 
     JSAtom name = JS_NewAtom(env->context, property->name);
