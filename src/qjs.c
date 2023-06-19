@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <js.h>
 #include <js/ffi.h>
 #include <mem.h>
@@ -1079,6 +1080,74 @@ js_get_reference_value (js_env_t *env, js_ref_t *reference, js_value_t **result)
     *result = wrapper;
 
     js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
+
+  return 0;
+}
+
+int
+js_define_class (js_env_t *env, const char *name, size_t len, js_function_cb constructor, void *data, js_property_descriptor_t const properties[], size_t properties_len, js_value_t **result) {
+  return -1;
+}
+
+int
+js_define_properties (js_env_t *env, js_value_t *object, js_property_descriptor_t const properties[], size_t properties_len) {
+  int err;
+
+  for (size_t i = 0; i < properties_len; i++) {
+    const js_property_descriptor_t *property = &properties[i];
+
+    int flags = 0;
+
+    if ((property->attributes & js_writable) != 0 || property->getter || property->setter) {
+      flags |= JS_PROP_WRITABLE;
+    }
+
+    if ((property->attributes & js_enumerable) != 0) {
+      flags |= JS_PROP_ENUMERABLE;
+    }
+
+    if ((property->attributes & js_configurable) != 0) {
+      flags |= JS_PROP_CONFIGURABLE;
+    }
+
+    JSValue value = JS_NULL, getter = JS_NULL, setter = JS_NULL;
+
+    if (property->getter || property->setter) {
+      flags |= JS_PROP_GETSET;
+
+      if (property->getter) {
+        js_value_t *fn;
+        err = js_create_function(env, property->name, -1, property->getter, property->data, &fn);
+        assert(err == 0);
+
+        getter = fn->value;
+      }
+
+      if (property->setter) {
+        js_value_t *fn;
+        err = js_create_function(env, property->name, -1, property->setter, property->data, &fn);
+        assert(err == 0);
+
+        setter = fn->value;
+      }
+    } else if (property->method) {
+      js_value_t *fn;
+      err = js_create_function(env, property->name, -1, property->method, property->data, &fn);
+      assert(err == 0);
+
+      value = fn->value;
+    } else {
+      value = property->value->value;
+    }
+
+    JSAtom name = JS_NewAtom(env->context, property->name);
+
+    err = JS_DefineProperty(env->context, object->value, name, value, getter, setter, flags);
+
+    JS_FreeAtom(env->context, name);
+
+    if (err < 0) return -1;
   }
 
   return 0;
@@ -2182,6 +2251,13 @@ js_typeof (js_env_t *env, js_value_t *value, js_value_type_t *result) {
 }
 
 int
+js_instanceof (js_env_t *env, js_value_t *object, js_value_t *constructor, bool *result) {
+  *result = JS_IsInstanceOf(env->context, constructor->value, object->value);
+
+  return 0;
+}
+
+int
 js_is_undefined (js_env_t *env, js_value_t *value, bool *result) {
   *result = JS_IsUndefined(value->value);
 
@@ -2940,6 +3016,46 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
   free(args);
 
   if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result == NULL) JS_FreeValue(env->context, value);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = value;
+
+    *result = wrapper;
+
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
+
+  return 0;
+}
+
+int
+js_new_instance (js_env_t *env, js_value_t *constructor, size_t argc, js_value_t *const argv[], js_value_t **result) {
+  JSValue *args = malloc(argc * sizeof(JSValue));
+
+  for (size_t i = 0; i < argc; i++) {
+    args[i] = argv[i]->value;
+  }
+
+  env->depth++;
+
+  JSValue value = JS_CallConstructor(env->context, constructor->value, argc, args);
+
+  free(args);
 
   env->depth--;
 

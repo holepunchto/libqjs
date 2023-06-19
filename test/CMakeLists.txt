@@ -37,6 +37,8 @@ list(APPEND tests
   create-string-utf8
   create-string-utf8-with-null
   create-unsafe-arraybuffer
+  define-class
+  define-class-with-method
   dynamic-import
   dynamic-import-without-handler
   fatal-exception
@@ -92,6 +94,8 @@ list(APPEND skipped_tests
   create-function-with-ffi-string
   create-function-with-ffi-uint8array
   create-module-import-missing
+  define-class
+  define-class-with-method
   dynamic-import-without-handler
   run-module-async
   wasm
