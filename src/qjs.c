@@ -70,19 +70,21 @@ struct js_module_s {
   JSValue source;
   JSValue bytecode;
   JSModuleDef *definition;
+  js_module_meta_cb meta;
+  void *meta_data;
   char *name;
 };
 
 struct js_module_resolver_s {
   js_module_t *module;
-  js_module_cb cb;
+  js_module_resolve_cb cb;
   void *data;
   js_module_resolver_t *next;
 };
 
 struct js_module_evaluator_s {
   js_module_t *module;
-  js_synthetic_module_cb cb;
+  js_module_evaluate_cb cb;
   void *data;
   js_module_evaluator_t *next;
 };
@@ -783,7 +785,7 @@ js_run_script (js_env_t *env, const char *file, size_t len, int offset, js_value
 }
 
 int
-js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, js_module_t **result) {
+js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, js_module_meta_cb cb, void *data, js_module_t **result) {
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = env->context;
@@ -791,6 +793,8 @@ js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_va
   module->bytecode = JS_NULL;
   module->definition = NULL;
   module->name = strndup(name, len);
+  module->meta = cb;
+  module->meta_data = data;
 
   *result = module;
 
@@ -813,7 +817,7 @@ on_evaluate_module (JSContext *context, JSModuleDef *definition) {
 }
 
 int
-js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_value_t *const export_names[], size_t names_len, js_synthetic_module_cb cb, void *data, js_module_t **result) {
+js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_value_t *const export_names[], size_t names_len, js_module_evaluate_cb cb, void *data, js_module_t **result) {
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = env->context;
@@ -821,6 +825,8 @@ js_create_synthetic_module (js_env_t *env, const char *name, size_t len, js_valu
   module->bytecode = JS_NULL;
   module->definition = JS_NewCModule(env->context, name, on_evaluate_module);
   module->name = strndup(name, len);
+  module->meta = NULL;
+  module->meta_data = NULL;
 
   for (size_t i = 0; i < names_len; i++) {
     const char *str = JS_ToCString(env->context, export_names[i]->value);
@@ -884,7 +890,7 @@ js_set_module_export (js_env_t *env, js_module_t *module, js_value_t *name, js_v
 }
 
 int
-js_instantiate_module (js_env_t *env, js_module_t *module, js_module_cb cb, void *data) {
+js_instantiate_module (js_env_t *env, js_module_t *module, js_module_resolve_cb cb, void *data) {
   if (JS_IsNull(module->source)) return 0;
 
   js_module_resolver_t resolver = {
@@ -941,6 +947,25 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
   js_deferred_t *deferred;
   err = js_create_promise(env, &deferred, result);
   if (err < 0) return err;
+
+  if (module->meta) {
+    JSValue meta = JS_GetImportMeta(env->context, module->definition);
+
+    module->meta(
+      env,
+      module,
+      &(js_value_t){meta},
+      module->meta_data
+    );
+
+    JSValue error = JS_GetException(env->context);
+
+    if (!JS_IsNull(error)) {
+      js_reject_deferred(env, deferred, &(js_value_t){error});
+
+      return 0;
+    }
+  }
 
   env->depth++;
 
