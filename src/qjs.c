@@ -3177,7 +3177,7 @@ js_get_dataview_info (js_env_t *env, js_value_t *dataview, void **pdata, size_t 
 }
 
 int
-js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, js_value_t *const argv[], js_value_t **result) {
+js_call_function (js_env_t *env, js_value_t *recv, js_value_t *function, size_t argc, js_value_t *const argv[], js_value_t **result) {
   JSValue *args = malloc(argc * sizeof(JSValue));
 
   for (size_t i = 0; i < argc; i++) {
@@ -3186,11 +3186,53 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *fn, size_t argc, 
 
   env->depth++;
 
-  JSValue value = JS_Call(env->context, fn->value, recv->value, argc, args);
+  JSValue value = JS_Call(env->context, function->value, recv->value, argc, args);
 
   free(args);
 
   if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result == NULL) JS_FreeValue(env->context, value);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = value;
+
+    *result = wrapper;
+
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
+
+  return 0;
+}
+
+int
+js_call_function_with_checkpoint (js_env_t *env, js_value_t *receiver, js_value_t *function, size_t argc, js_value_t *const argv[], js_value_t **result) {
+  JSValue *args = malloc(argc * sizeof(JSValue));
+
+  for (size_t i = 0; i < argc; i++) {
+    args[i] = argv[i]->value;
+  }
+
+  env->depth++;
+
+  JSValue value = JS_Call(env->context, function->value, receiver->value, argc, args);
+
+  free(args);
+
+  run_microtasks(env);
 
   env->depth--;
 
