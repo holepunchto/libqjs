@@ -2722,15 +2722,19 @@ js_get_value_double (js_env_t *env, js_value_t *value, double *result) {
 }
 
 int
-js_get_value_bigint_int64 (js_env_t *env, js_value_t *value, int64_t *result) {
+js_get_value_bigint_int64 (js_env_t *env, js_value_t *value, int64_t *result, bool *lossless) {
   JS_ToBigInt64(env->context, result, value->value);
+
+  if (lossless) *lossless = true;
 
   return 0;
 }
 
 int
-js_get_value_bigint_uint64 (js_env_t *env, js_value_t *value, uint64_t *result) {
+js_get_value_bigint_uint64 (js_env_t *env, js_value_t *value, uint64_t *result, bool *lossless) {
   JS_ToBigInt64(env->context, (int64_t *) result, value->value);
+
+  if (lossless) *lossless = true;
 
   return 0;
 }
