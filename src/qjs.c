@@ -30,8 +30,8 @@ struct js_platform_s {
 struct js_env_s {
   mem_heap_t *heap;
   uv_loop_t *loop;
-  uv_prepare_t prepare;
-  uv_check_t check;
+  uv_prepare_t *prepare;
+  uv_check_t *check;
   js_platform_t *platform;
   js_handle_scope_t *scope;
   uint32_t depth;
@@ -377,9 +377,9 @@ on_prepare (uv_prepare_t *handle);
 static inline void
 check_liveness (js_env_t *env) {
   if (true /* macrotask queue empty */) {
-    uv_prepare_stop(&env->prepare);
+    uv_prepare_stop(env->prepare);
   } else {
-    uv_prepare_start(&env->prepare, on_prepare);
+    uv_prepare_start(env->prepare, on_prepare);
   }
 }
 
@@ -577,18 +577,22 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   JS_SetRuntimeOpaque(runtime, env);
   JS_SetContextOpaque(context, env);
 
-  uv_prepare_init(loop, &env->prepare);
-  uv_prepare_start(&env->prepare, on_prepare);
-  env->prepare.data = (void *) env;
+  env->prepare = malloc(sizeof(uv_prepare_t));
 
-  uv_check_init(loop, &env->check);
-  uv_check_start(&env->check, on_check);
-  env->check.data = (void *) env;
+  uv_prepare_init(loop, env->prepare);
+  uv_prepare_start(env->prepare, on_prepare);
+  env->prepare->data = (void *) env;
+
+  env->check = malloc(sizeof(uv_check_t));
+
+  uv_check_init(loop, env->check);
+  uv_check_start(env->check, on_check);
+  env->check->data = (void *) env;
 
   // The check handle should not on its own keep the loop alive; it's simply
   // used for running any outstanding tasks that might cause additional work
   // to be queued.
-  uv_unref((uv_handle_t *) (&env->check));
+  uv_unref((uv_handle_t *) env->check);
 
   js_open_handle_scope(env, &env->scope);
 
@@ -597,12 +601,20 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   return 0;
 }
 
+static void
+on_handle_close (uv_handle_t *handle) {
+  free(handle);
+}
+
 int
 js_destroy_env (js_env_t *env) {
   js_close_handle_scope(env, env->scope);
 
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
+
+  uv_close((uv_handle_t *) env->prepare, on_handle_close);
+  uv_close((uv_handle_t *) env->check, on_handle_close);
 
   mem_heap_destroy(env->heap);
 
