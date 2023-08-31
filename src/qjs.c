@@ -3062,6 +3062,8 @@ int
 js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_type_t *ptype, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
   size_t offset, byte_len, bytes_per_element;
 
+  JSValue arraybuffer = JS_GetTypedArrayBuffer(env->context, typedarray->value, &offset, &byte_len, &bytes_per_element);
+
   if (ptype) {
     JSValue global = JS_GetGlobalObject(env->context);
 
@@ -3098,12 +3100,10 @@ js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_typ
     JS_FreeValue(env->context, global);
   }
 
-  JSValue arraybuffer = JS_GetTypedArrayBuffer(env->context, typedarray->value, &offset, &byte_len, &bytes_per_element);
-
   if (pdata) {
     size_t size;
 
-    *pdata = JS_GetArrayBuffer(env->context, &size, arraybuffer);
+    *pdata = JS_GetArrayBuffer(env->context, &size, arraybuffer) + offset;
   }
 
   if (plen) {
@@ -3131,7 +3131,17 @@ js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_typ
 
 int
 js_get_dataview_info (js_env_t *env, js_value_t *dataview, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
+  size_t offset;
+
   JSValue arraybuffer;
+
+  if (pdata || poffset) {
+    JSValue value = JS_GetPropertyStr(env->context, dataview->value, "byteOffset");
+
+    JS_ToInt64(env->context, (int64_t *) &offset, value);
+
+    JS_FreeValue(env->context, value);
+  }
 
   if (pdata || parraybuffer) {
     arraybuffer = JS_GetPropertyStr(env->context, dataview->value, "buffer");
@@ -3140,7 +3150,7 @@ js_get_dataview_info (js_env_t *env, js_value_t *dataview, void **pdata, size_t 
   if (pdata) {
     size_t size;
 
-    *pdata = JS_GetArrayBuffer(env->context, &size, arraybuffer);
+    *pdata = JS_GetArrayBuffer(env->context, &size, arraybuffer) + offset;
   }
 
   if (plen) {
@@ -3162,11 +3172,7 @@ js_get_dataview_info (js_env_t *env, js_value_t *dataview, void **pdata, size_t 
   }
 
   if (poffset) {
-    JSValue value = JS_GetPropertyStr(env->context, dataview->value, "byteOffset");
-
-    JS_ToInt64(env->context, (int64_t *) poffset, value);
-
-    JS_FreeValue(env->context, value);
+    *poffset = offset;
   }
 
   if (pdata || parraybuffer) {
