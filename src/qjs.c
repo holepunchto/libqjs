@@ -91,6 +91,7 @@ struct js_module_evaluator_s {
 
 struct js_ref_s {
   JSValue value;
+  JSValue symbol;
   uint32_t count;
 };
 
@@ -1020,7 +1021,7 @@ js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
 
   JS_SetOpaque(external, finalizer);
 
-  JSAtom atom = JS_NewAtom(env->context, "__native_reference");
+  JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
 
   JS_DefinePropertyValue(env->context, reference->value, atom, external, 0);
 
@@ -1035,7 +1036,7 @@ js_clear_weak_reference (js_env_t *env, js_ref_t *reference) {
 
   JS_DupValue(env->context, reference->value);
 
-  JSAtom atom = JS_NewAtom(env->context, "__native_reference");
+  JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
 
   JSValue external = JS_GetProperty(env->context, reference->value, atom);
 
@@ -1055,6 +1056,17 @@ js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t 
   reference->value = JS_DupValue(env->context, value->value);
   reference->count = count;
 
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Symbol");
+
+  JSValue description = JS_NewString(env->context, "__native_reference");
+
+  reference->symbol = JS_CallConstructor(env->context, constructor, 1, &description);
+
+  JS_FreeValue(env->context, description);
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
   if (reference->count == 0) js_set_weak_reference(env, reference);
 
   *result = reference;
@@ -1066,7 +1078,7 @@ int
 js_delete_reference (js_env_t *env, js_ref_t *reference) {
   if (!JS_IsNull(reference->value)) {
     if (reference->count == 0) {
-      JSAtom atom = JS_NewAtom(env->context, "__native_reference");
+      JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
 
       JSValue external = JS_GetProperty(env->context, reference->value, atom);
 
@@ -1081,6 +1093,8 @@ js_delete_reference (js_env_t *env, js_ref_t *reference) {
 
     JS_FreeValue(env->context, reference->value);
   }
+
+  JS_FreeValue(env->context, reference->symbol);
 
   free(reference);
 
