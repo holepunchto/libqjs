@@ -1061,7 +1061,7 @@ js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t 
 
   JSValue description = JS_NewString(env->context, "__native_reference");
 
-  reference->symbol = JS_CallConstructor(env->context, constructor, 1, &description);
+  reference->symbol = JS_Call(env->context, constructor, global, 1, &description);
 
   JS_FreeValue(env->context, description);
   JS_FreeValue(env->context, constructor);
@@ -1591,7 +1591,7 @@ js_create_symbol (js_env_t *env, js_value_t *description, js_value_t **result) {
 
   JSValue arg = description->value;
 
-  wrapper->value = JS_CallConstructor(env->context, constructor, 1, &arg);
+  wrapper->value = JS_Call(env->context, constructor, global, 1, &arg);
 
   *result = wrapper;
 
