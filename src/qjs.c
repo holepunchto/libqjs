@@ -146,9 +146,9 @@ struct js_promise_rejection_s {
   js_promise_rejection_t *next;
 };
 
-const char *js_platform_identifier = "quickjs";
+static const char *js_platform_identifier = "quickjs";
 
-const char *js_platform_version = NULL;
+static const char *js_platform_version = "2021-03-27";
 
 static JSClassID js_external_data_class_id;
 static JSClassID js_finalizer_data_class_id;
@@ -185,6 +185,20 @@ js_create_platform (uv_loop_t *loop, const js_platform_options_t *options, js_pl
 int
 js_destroy_platform (js_platform_t *platform) {
   free(platform);
+
+  return 0;
+}
+
+int
+js_get_platform_identifier (js_platform_t *platform, const char **result) {
+  *result = js_platform_identifier;
+
+  return 0;
+}
+
+int
+js_get_platform_version (js_platform_t *platform, const char **result) {
+  *result = js_platform_version;
 
   return 0;
 }
