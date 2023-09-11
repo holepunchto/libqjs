@@ -93,6 +93,7 @@ struct js_ref_s {
   JSValue value;
   JSValue symbol;
   uint32_t count;
+  bool finalized;
 };
 
 struct js_deferred_s {
@@ -1018,11 +1019,12 @@ on_reference_finalize (js_env_t *env, void *data, void *finalize_hint) {
   js_ref_t *reference = (js_ref_t *) data;
 
   reference->value = JS_NULL;
+  reference->finalized = true;
 }
 
 static inline void
 js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
-  if (JS_IsNull(reference->value)) return;
+  if (reference->finalized) return;
 
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
@@ -1046,7 +1048,7 @@ js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
 
 static inline void
 js_clear_weak_reference (js_env_t *env, js_ref_t *reference) {
-  if (JS_IsNull(reference->value)) return;
+  if (reference->finalized) return;
 
   JS_DupValue(env->context, reference->value);
 
@@ -1069,19 +1071,32 @@ js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t 
 
   reference->value = JS_DupValue(env->context, value->value);
   reference->count = count;
+  reference->finalized = false;
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Symbol");
+  if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Symbol");
 
-  JSValue description = JS_NewString(env->context, "__native_reference");
+    JSValue description = JS_NewString(env->context, "__native_reference");
 
-  reference->symbol = JS_Call(env->context, constructor, global, 1, &description);
+    reference->symbol = JS_Call(env->context, constructor, global, 1, &description);
 
-  JS_FreeValue(env->context, description);
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, description);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
 
-  if (reference->count == 0) js_set_weak_reference(env, reference);
+    if (reference->count == 0) js_set_weak_reference(env, reference);
+  } else {
+    if (reference->count == 0) {
+      js_throw_errorf(env, NULL, "Cannot make weak reference to non-object type");
+
+      free(reference);
+
+      return -1;
+    }
+
+    reference->symbol = JS_NULL;
+  }
 
   *result = reference;
 
@@ -1090,7 +1105,7 @@ js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t 
 
 int
 js_delete_reference (js_env_t *env, js_ref_t *reference) {
-  if (!JS_IsNull(reference->value)) {
+  if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
     if (reference->count == 0) {
       JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
 
@@ -1104,9 +1119,9 @@ js_delete_reference (js_env_t *env, js_ref_t *reference) {
 
       JS_FreeAtom(env->context, atom);
     }
-
-    JS_FreeValue(env->context, reference->value);
   }
+
+  if (reference->count > 0) JS_FreeValue(env->context, reference->value);
 
   JS_FreeValue(env->context, reference->symbol);
 
@@ -1119,11 +1134,11 @@ int
 js_reference_ref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
   reference->count++;
 
-  if (reference->count == 1) js_clear_weak_reference(env, reference);
-
-  if (result) {
-    *result = reference->count;
+  if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
+    if (reference->count == 1) js_clear_weak_reference(env, reference);
   }
+
+  if (result) *result = reference->count;
 
   return 0;
 }
@@ -1136,22 +1151,27 @@ js_reference_unref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
     return -1;
   }
 
+  if (reference->count == 1) {
+    if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
+      js_set_weak_reference(env, reference);
+    } else {
+      js_throw_errorf(env, NULL, "Cannot make weak reference to non-object type");
+
+      return -1;
+    }
+  }
+
   reference->count--;
 
-  if (reference->count == 0) js_set_weak_reference(env, reference);
-
-  if (result) {
-    *result = reference->count;
-  }
+  if (result) *result = reference->count;
 
   return 0;
 }
 
 int
 js_get_reference_value (js_env_t *env, js_ref_t *reference, js_value_t **result) {
-  if (JS_IsNull(reference->value)) {
-    *result = NULL;
-  } else {
+  if (reference->finalized) *result = NULL;
+  else {
     js_value_t *wrapper = malloc(sizeof(js_value_t));
 
     wrapper->value = JS_DupValue(env->context, reference->value);
