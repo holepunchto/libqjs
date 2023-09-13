@@ -1,5 +1,8 @@
 list(APPEND tests
   add-finalizer
+  add-type-tag
+  add-type-tag-delegate
+  add-type-tag-external
   adjust-external-memory
   atomics-wait-timeout
   atomics-wait-timeout-notify
@@ -10,6 +13,8 @@ list(APPEND tests
   call-function-throw
   create-arraybuffer
   create-arraybuffer-with-backing-store
+  create-delegate
+  create-delegate-get-without-has
   create-external
   create-external-with-finalizer
   create-external-arraybuffer
