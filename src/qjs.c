@@ -2738,6 +2738,106 @@ js_create_dataview (js_env_t *env, size_t len, js_value_t *arraybuffer, size_t o
 }
 
 int
+js_coerce_to_boolean (js_env_t *env, js_value_t *value, js_value_t **result) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Boolean");
+
+  JSValue argv[1] = {JS_DupValue(env->context, value->value)};
+
+  JSValue boolean = JS_Call(env->context, constructor, global, 1, argv);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  if (JS_IsException(boolean)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = boolean;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_coerce_to_number (js_env_t *env, js_value_t *value, js_value_t **result) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Number");
+
+  JSValue argv[1] = {JS_DupValue(env->context, value->value)};
+
+  JSValue number = JS_Call(env->context, constructor, global, 1, argv);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  if (JS_IsException(number)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = number;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_coerce_to_string (js_env_t *env, js_value_t *value, js_value_t **result) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "String");
+
+  JSValue argv[1] = {JS_DupValue(env->context, value->value)};
+
+  JSValue string = JS_Call(env->context, constructor, global, 1, argv);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  if (JS_IsException(string)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = string;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
+js_coerce_to_object (js_env_t *env, js_value_t *value, js_value_t **result) {
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Object");
+
+  JSValue argv[1] = {JS_DupValue(env->context, value->value)};
+
+  JSValue object = JS_Call(env->context, constructor, global, 1, argv);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  if (JS_IsException(object)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = object;
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+int
 js_typeof (js_env_t *env, js_value_t *value, js_value_type_t *result) {
   if (JS_IsNumber(value->value)) {
     *result = js_number;
