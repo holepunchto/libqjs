@@ -114,17 +114,22 @@ list(APPEND tests
 )
 
 list(APPEND skipped_tests
+  # Not supported
   atomics-wait-timeout
   atomics-wait-timeout-notify
+
+  # Not supported
   create-function-with-ffi
   create-function-with-ffi-arraybuffer
   create-function-with-ffi-pointer
   create-function-with-ffi-receiver
   create-function-with-ffi-string
   create-function-with-ffi-uint8array
-  create-module-import-missing
-  dynamic-import-without-handler
+
+  # Not supported
   run-module-async
+
+  # Not supported
   wasm
   wasm-async
 )
