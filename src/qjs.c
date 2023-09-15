@@ -3305,8 +3305,23 @@ js_get_property_names (js_env_t *env, js_value_t *object, js_value_t **result) {
   JSPropertyEnum *properties;
   uint32_t len;
 
+  env->depth++;
+
   err = JS_GetOwnPropertyNames(env->context, &properties, &len, object->value, JS_GPN_ENUM_ONLY | JS_GPN_STRING_MASK);
-  if (err < 0) return -1;
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (err < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
 
   JSValue array = JS_NewArray(env->context);
 
