@@ -3339,15 +3339,36 @@ int
 js_get_property (js_env_t *env, js_value_t *object, js_value_t *key, js_value_t **result) {
   JSAtom atom = JS_ValueToAtom(env->context, key->value);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  env->depth++;
 
-  wrapper->value = JS_GetProperty(env->context, object->value, atom);
-
-  *result = wrapper;
-
-  js_attach_to_handle_scope(env, env->scope, wrapper);
+  JSValue value = JS_GetProperty(env->context, object->value, atom);
 
   JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result == NULL) JS_FreeValue(env->context, value);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = value;
+
+    *result = wrapper;
+
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
 
   return 0;
 }
@@ -3356,9 +3377,27 @@ int
 js_has_property (js_env_t *env, js_value_t *object, js_value_t *key, bool *result) {
   JSAtom atom = JS_ValueToAtom(env->context, key->value);
 
-  *result = JS_HasProperty(env->context, object->value, atom) == 1;
+  env->depth++;
+
+  int success = JS_HasProperty(env->context, object->value, atom);
 
   JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result) *result = success == 1;
 
   return 0;
 }
@@ -3367,9 +3406,25 @@ int
 js_set_property (js_env_t *env, js_value_t *object, js_value_t *key, js_value_t *value) {
   JSAtom atom = JS_ValueToAtom(env->context, key->value);
 
-  JS_SetProperty(env->context, object->value, atom, JS_DupValue(env->context, value->value));
+  env->depth++;
+
+  int success = JS_SetProperty(env->context, object->value, atom, JS_DupValue(env->context, value->value));
 
   JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
 
   return 0;
 }
@@ -3378,24 +3433,61 @@ int
 js_delete_property (js_env_t *env, js_value_t *object, js_value_t *key, bool *result) {
   JSAtom atom = JS_ValueToAtom(env->context, key->value);
 
-  *result = JS_HasProperty(env->context, object->value, atom) == 1;
+  env->depth++;
 
-  JS_DeleteProperty(env->context, object->value, atom, 0);
+  int success = JS_DeleteProperty(env->context, object->value, atom, 0);
 
   JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result) *result = success == 1;
 
   return 0;
 }
 
 int
 js_get_named_property (js_env_t *env, js_value_t *object, const char *name, js_value_t **result) {
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  env->depth++;
 
-  wrapper->value = JS_GetPropertyStr(env->context, object->value, name);
+  JSValue value = JS_GetPropertyStr(env->context, object->value, name);
 
-  *result = wrapper;
+  if (env->depth == 1) run_microtasks(env);
 
-  js_attach_to_handle_scope(env, env->scope, wrapper);
+  env->depth--;
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result == NULL) JS_FreeValue(env->context, value);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = value;
+
+    *result = wrapper;
+
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
 
   return 0;
 }
@@ -3404,16 +3496,50 @@ int
 js_has_named_property (js_env_t *env, js_value_t *object, const char *name, bool *result) {
   JSAtom atom = JS_NewAtom(env->context, name);
 
-  *result = JS_HasProperty(env->context, object->value, atom) == 1;
+  env->depth++;
+
+  int success = JS_HasProperty(env->context, object->value, atom);
 
   JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result) *result = success == 1;
 
   return 0;
 }
 
 int
 js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_value_t *value) {
-  JS_SetPropertyStr(env->context, object->value, name, JS_DupValue(env->context, value->value));
+  env->depth++;
+
+  int success = JS_SetPropertyStr(env->context, object->value, name, JS_DupValue(env->context, value->value));
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
 
   return 0;
 }
@@ -3422,24 +3548,61 @@ int
 js_delete_named_property (js_env_t *env, js_value_t *object, const char *name, bool *result) {
   JSAtom atom = JS_NewAtom(env->context, name);
 
-  *result = JS_HasProperty(env->context, object->value, atom) == 1;
+  env->depth++;
 
-  JS_DeleteProperty(env->context, object->value, atom, 0);
+  int success = JS_DeleteProperty(env->context, object->value, atom, 0);
 
   JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result) *result = success == 1;
 
   return 0;
 }
 
 int
 js_get_element (js_env_t *env, js_value_t *object, uint32_t index, js_value_t **result) {
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  env->depth++;
 
-  wrapper->value = JS_GetPropertyUint32(env->context, object->value, index);
+  JSValue value = JS_GetPropertyUint32(env->context, object->value, index);
 
-  *result = wrapper;
+  if (env->depth == 1) run_microtasks(env);
 
-  js_attach_to_handle_scope(env, env->scope, wrapper);
+  env->depth--;
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result == NULL) JS_FreeValue(env->context, value);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = value;
+
+    *result = wrapper;
+
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
 
   return 0;
 }
@@ -3448,16 +3611,50 @@ int
 js_has_element (js_env_t *env, js_value_t *object, uint32_t index, bool *result) {
   JSAtom atom = JS_NewAtomUInt32(env->context, index);
 
-  *result = JS_HasProperty(env->context, object->value, atom) == 1;
+  env->depth++;
+
+  int success = JS_HasProperty(env->context, object->value, atom);
 
   JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result) *result = success == 1;
 
   return 0;
 }
 
 int
 js_set_element (js_env_t *env, js_value_t *object, uint32_t index, js_value_t *value) {
-  JS_SetPropertyUint32(env->context, object->value, index, JS_DupValue(env->context, value->value));
+  env->depth++;
+
+  int success = JS_SetPropertyUint32(env->context, object->value, index, JS_DupValue(env->context, value->value));
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
 
   return 0;
 }
@@ -3466,11 +3663,27 @@ int
 js_delete_element (js_env_t *env, js_value_t *object, uint32_t index, bool *result) {
   JSAtom atom = JS_NewAtomUInt32(env->context, index);
 
-  *result = JS_HasProperty(env->context, object->value, atom) == 1;
+  env->depth++;
 
-  JS_DeleteProperty(env->context, object->value, atom, 0);
+  int success = JS_DeleteProperty(env->context, object->value, atom, 0);
 
   JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    }
+
+    return -1;
+  }
+
+  if (result) *result = success == 1;
 
   return 0;
 }
