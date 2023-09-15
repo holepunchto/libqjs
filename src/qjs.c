@@ -3969,11 +3969,9 @@ js_call_function_with_checkpoint (js_env_t *env, js_value_t *receiver, js_value_
   env->depth--;
 
   if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
+    JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
-    }
+    on_uncaught_exception(env->context, JS_DupValue(env->context, error));
 
     return -1;
   }
