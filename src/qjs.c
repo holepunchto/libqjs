@@ -29,19 +29,29 @@ struct js_platform_s {
 };
 
 struct js_env_s {
-  mem_heap_t *heap;
-  uv_loop_t *loop;
-  uv_prepare_t *prepare;
-  uv_check_t *check;
   js_platform_t *platform;
+
+  mem_heap_t *heap;
+
+  uv_loop_t *loop;
+  uv_prepare_t prepare;
+  uv_check_t check;
+  int active_handles;
+
   js_handle_scope_t *scope;
+
   uint32_t depth;
+
   JSRuntime *runtime;
   JSContext *context;
+
   int64_t external_memory;
+
   js_module_resolver_t *resolvers;
   js_module_evaluator_t *evaluators;
+
   js_promise_rejection_t *promise_rejections;
+
   js_uncaught_exception_cb on_uncaught_exception;
   void *uncaught_exception_data;
   js_unhandled_rejection_cb on_unhandled_rejection;
@@ -476,11 +486,15 @@ on_prepare (uv_prepare_t *handle);
 
 static inline void
 check_liveness (js_env_t *env) {
+  int err;
+
   if (true /* macrotask queue empty */) {
-    uv_prepare_stop(env->prepare);
+    err = uv_prepare_stop(&env->prepare);
   } else {
-    uv_prepare_start(env->prepare, on_prepare);
+    err = uv_prepare_start(&env->prepare, on_prepare);
   }
+
+  assert(err == 0);
 }
 
 static void
@@ -547,8 +561,11 @@ on_shared_dup (void *opaque, void *ptr) {
 
 int
 js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *options, js_env_t **result) {
+  int err;
+
   mem_heap_t *heap;
-  mem_heap_init(NULL, &heap);
+  err = mem_heap_init(NULL, &heap);
+  assert(err == 0);
 
   JSRuntime *runtime = JS_NewRuntime2(
     &(JSMallocFunctions){
@@ -636,24 +653,29 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   JS_SetRuntimeOpaque(runtime, env);
   JS_SetContextOpaque(context, env);
 
-  env->prepare = malloc(sizeof(uv_prepare_t));
+  err = uv_prepare_init(loop, &env->prepare);
+  assert(err == 0);
 
-  uv_prepare_init(loop, env->prepare);
-  uv_prepare_start(env->prepare, on_prepare);
-  env->prepare->data = (void *) env;
+  err = uv_prepare_start(&env->prepare, on_prepare);
+  assert(err == 0);
 
-  env->check = malloc(sizeof(uv_check_t));
+  env->prepare.data = (void *) env;
 
-  uv_check_init(loop, env->check);
-  uv_check_start(env->check, on_check);
-  env->check->data = (void *) env;
+  err = uv_check_init(loop, &env->check);
+  assert(err == 0);
+
+  err = uv_check_start(&env->check, on_check);
+  assert(err == 0);
+
+  env->check.data = (void *) env;
 
   // The check handle should not on its own keep the loop alive; it's simply
   // used for running any outstanding tasks that might cause additional work
   // to be queued.
-  uv_unref((uv_handle_t *) env->check);
+  uv_unref((uv_handle_t *) &env->check);
 
-  js_open_handle_scope(env, &env->scope);
+  err = js_open_handle_scope(env, &env->scope);
+  assert(err == 0);
 
   *result = env;
 
@@ -662,22 +684,28 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
 
 static void
 on_handle_close (uv_handle_t *handle) {
-  free(handle);
+  js_env_t *env = (js_env_t *) handle->data;
+
+  if (--env->active_handles == 0) {
+    free(env);
+  }
 }
 
 int
 js_destroy_env (js_env_t *env) {
-  js_close_handle_scope(env, env->scope);
+  int err;
+
+  err = js_close_handle_scope(env, env->scope);
+  assert(err == 0);
 
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
 
-  uv_close((uv_handle_t *) env->prepare, on_handle_close);
-  uv_close((uv_handle_t *) env->check, on_handle_close);
+  uv_close((uv_handle_t *) &env->prepare, on_handle_close);
+
+  uv_close((uv_handle_t *) &env->check, on_handle_close);
 
   mem_heap_destroy(env->heap);
-
-  free(env);
 
   return 0;
 }
