@@ -29,8 +29,6 @@ struct js_platform_s {
 };
 
 struct js_env_s {
-  js_platform_t *platform;
-
   mem_heap_t *heap;
 
   uv_loop_t *loop;
@@ -38,6 +36,7 @@ struct js_env_s {
   uv_check_t check;
   int active_handles;
 
+  js_platform_t *platform;
   js_handle_scope_t *scope;
 
   uint32_t depth;
@@ -631,13 +630,21 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   js_env_t *env = malloc(sizeof(js_env_t));
 
   env->heap = heap;
+
   env->loop = loop;
+  env->active_handles = 2;
+
   env->platform = platform;
+
   env->depth = 0;
+
   env->runtime = runtime;
   env->context = context;
+
   env->external_memory = 0;
+
   env->resolvers = NULL;
+  env->evaluators = NULL;
 
   env->promise_rejections = NULL;
 
