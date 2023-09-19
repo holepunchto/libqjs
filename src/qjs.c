@@ -326,6 +326,8 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
     .value = JS_NULL,
   };
 
+  JSModuleDef *definition = NULL;
+
   if (resolver) {
     module = resolver->cb(
       env,
@@ -335,7 +337,7 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
       resolver->data
     );
 
-    if (module == NULL) return NULL;
+    if (module == NULL) goto done;
 
     if (module->definition == NULL) {
       err = js_instantiate_module(
@@ -345,13 +347,15 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
         resolver->data
       );
 
-      if (err < 0) return NULL;
+      if (err < 0) goto done;
     }
+
+    definition = module->definition;
   } else {
     if (env->on_dynamic_import == NULL) {
       js_throw_error(env, NULL, "Dynamic import() is not supported");
 
-      return NULL;
+      goto done;
     }
 
     js_value_t referrer = {
@@ -366,15 +370,18 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
       env->dynamic_import_data
     );
 
-    if (module == NULL) return NULL;
+    if (module == NULL) goto done;
+
+    definition = module->definition;
   }
 
+done:
   JS_FreeValue(env->context, specifier.value);
 
   err = js_close_handle_scope(env, scope);
   assert(err == 0);
 
-  return module->definition;
+  return definition;
 }
 
 static void
@@ -392,6 +399,8 @@ on_uncaught_exception (JSContext *context, JSValue error) {
 
     err = js_close_handle_scope(env, scope);
     assert(err == 0);
+
+    JS_FreeValue(context, error);
   } else {
     JS_Throw(context, error);
   }
@@ -879,7 +888,7 @@ js_run_script (js_env_t *env, const char *file, size_t len, int offset, js_value
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -1030,6 +1039,8 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_resolve_cb 
     JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
   );
 
+  JS_FreeCString(env->context, str);
+
   if (env->depth == 1) run_microtasks(env);
 
   env->depth--;
@@ -1038,7 +1049,7 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_resolve_cb 
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -1073,10 +1084,14 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
       module->meta_data
     );
 
+    JS_FreeValue(env->context, meta);
+
     JSValue error = JS_GetException(env->context);
 
     if (!JS_IsNull(error)) {
       js_reject_deferred(env, deferred, &(js_value_t){error});
+
+      JS_FreeValue(env->context, error);
 
       return 0;
     }
@@ -1094,9 +1109,13 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
     JSValue error = JS_GetException(env->context);
 
     js_reject_deferred(env, deferred, &(js_value_t){error});
+
+    JS_FreeValue(env->context, error);
   } else {
     js_resolve_deferred(env, deferred, &(js_value_t){value});
   }
+
+  JS_FreeValue(env->context, value);
 
   return 0;
 }
@@ -1113,6 +1132,8 @@ static inline void
 js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
   if (reference->finalized) return;
 
+  int err;
+
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
   finalizer->env = env;
@@ -1126,7 +1147,8 @@ js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
 
   JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
 
-  JS_DefinePropertyValue(env->context, reference->value, atom, external, 0);
+  err = JS_DefinePropertyValue(env->context, reference->value, atom, external, 0);
+  assert(err >= 0);
 
   JS_FreeAtom(env->context, atom);
 
@@ -1137,6 +1159,8 @@ static inline void
 js_clear_weak_reference (js_env_t *env, js_ref_t *reference) {
   if (reference->finalized) return;
 
+  int err;
+
   JS_DupValue(env->context, reference->value);
 
   JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
@@ -1145,9 +1169,12 @@ js_clear_weak_reference (js_env_t *env, js_ref_t *reference) {
 
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_class_id);
 
+  JS_FreeValue(env->context, external);
+
   finalizer->finalize_cb = NULL;
 
-  JS_DeleteProperty(env->context, reference->value, atom, 0);
+  err = JS_DeleteProperty(env->context, reference->value, atom, 0);
+  assert(err >= 0);
 
   JS_FreeAtom(env->context, atom);
 }
@@ -1193,22 +1220,10 @@ js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t 
 int
 js_delete_reference (js_env_t *env, js_ref_t *reference) {
   if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
-    if (reference->count == 0) {
-      JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
-
-      JSValue external = JS_GetProperty(env->context, reference->value, atom);
-
-      js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_class_id);
-
-      finalizer->finalize_cb = NULL;
-
-      JS_DeleteProperty(env->context, reference->value, atom, 0);
-
-      JS_FreeAtom(env->context, atom);
-    }
+    if (reference->count == 0) js_clear_weak_reference(env, reference);
   }
 
-  if (reference->count > 0) JS_FreeValue(env->context, reference->value);
+  JS_FreeValue(env->context, reference->value);
 
   JS_FreeValue(env->context, reference->symbol);
 
@@ -1280,9 +1295,13 @@ on_constructor_finalize (JSRuntime *runtime, JSValue value) {
 
 static JSValue
 on_constructor_call (JSContext *context, JSValueConst new_target, int argc, JSValueConst *argv, int magic, JSValue *data) {
+  int err;
+
   JSValue prototype = JS_GetPropertyStr(context, new_target, "prototype");
 
   JSValue receiver = JS_NewObjectProto(context, prototype);
+
+  JS_FreeValue(context, prototype);
 
   js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_constructor_class_id);
 
@@ -1297,7 +1316,8 @@ on_constructor_call (JSContext *context, JSValueConst new_target, int argc, JSVa
   };
 
   js_handle_scope_t *scope;
-  js_open_handle_scope(env, &scope);
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
 
   js_value_t *result = callback->cb(env, &callback_info);
 
@@ -1311,10 +1331,11 @@ on_constructor_call (JSContext *context, JSValueConst new_target, int argc, JSVa
   if (!JS_IsNull(error)) {
     JS_FreeValue(env->context, value);
 
-    value = JS_Throw(env->context, JS_DupValue(env->context, error));
+    value = JS_Throw(env->context, error);
   }
 
-  js_close_handle_scope(env, scope);
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
 
   return receiver;
 }
@@ -1433,7 +1454,7 @@ js_define_properties (js_env_t *env, js_value_t *object, js_property_descriptor_
         err = js_create_function(env, property->name, -1, property->getter, property->data, &fn);
         assert(err == 0);
 
-        getter = JS_DupValue(env->context, fn->value);
+        getter = fn->value;
       }
 
       if (property->setter) {
@@ -1443,7 +1464,7 @@ js_define_properties (js_env_t *env, js_value_t *object, js_property_descriptor_
         err = js_create_function(env, property->name, -1, property->setter, property->data, &fn);
         assert(err == 0);
 
-        setter = JS_DupValue(env->context, fn->value);
+        setter = fn->value;
       }
     } else if (property->method) {
       flags |= JS_PROP_HAS_VALUE;
@@ -1452,11 +1473,11 @@ js_define_properties (js_env_t *env, js_value_t *object, js_property_descriptor_
       err = js_create_function(env, property->name, -1, property->method, property->data, &fn);
       assert(err == 0);
 
-      value = JS_DupValue(env->context, fn->value);
+      value = fn->value;
     } else {
       flags |= JS_PROP_HAS_VALUE;
 
-      value = JS_DupValue(env->context, property->value->value);
+      value = property->value->value;
     }
 
     JSAtom name = JS_NewAtom(env->context, property->name);
@@ -1473,6 +1494,8 @@ js_define_properties (js_env_t *env, js_value_t *object, js_property_descriptor_
 
 int
 js_wrap (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_ref_t **result) {
+  int err;
+
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
   finalizer->env = env;
@@ -1486,11 +1509,19 @@ js_wrap (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_
 
   JSAtom atom = JS_NewAtom(env->context, "__native_external");
 
-  JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+  err = JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+
+  if (err < 0) {
+    JS_FreeValue(env->context, external);
+
+    JS_FreeAtom(env->context, atom);
+
+    return -1;
+  }
 
   JS_FreeAtom(env->context, atom);
 
-  if (result) js_create_reference(env, object, 0, result);
+  if (result) return js_create_reference(env, object, 0, result);
 
   return 0;
 }
@@ -1505,6 +1536,8 @@ js_unwrap (js_env_t *env, js_value_t *object, void **result) {
 
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_class_id);
 
+  JS_FreeValue(env->context, external);
+
   *result = finalizer->data;
 
   return 0;
@@ -1512,19 +1545,27 @@ js_unwrap (js_env_t *env, js_value_t *object, void **result) {
 
 int
 js_remove_wrap (js_env_t *env, js_value_t *object, void **result) {
+  int err;
+
   JSAtom atom = JS_NewAtom(env->context, "__native_external");
 
   JSValue external = JS_GetProperty(env->context, object->value, atom);
 
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js_external_class_id);
 
+  JS_FreeValue(env->context, external);
+
   finalizer->finalize_cb = NULL;
 
-  if (result) {
-    *result = finalizer->data;
-  }
+  if (result) *result = finalizer->data;
 
-  JS_DeleteProperty(env->context, object->value, atom, 0);
+  err = JS_DeleteProperty(env->context, object->value, atom, 0);
+
+  if (err < 0) {
+    JS_FreeAtom(env->context, atom);
+
+    return -1;
+  }
 
   JS_FreeAtom(env->context, atom);
 
@@ -1553,6 +1594,8 @@ on_finalizer_finalize (JSRuntime *runtime, JSValue value) {
 
 int
 js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_ref_t **result) {
+  int err;
+
   js_finalizer_list_t *prev = malloc(sizeof(js_finalizer_list_t));
 
   js_finalizer_t *finalizer = &prev->finalizer;
@@ -1573,7 +1616,15 @@ js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb 
 
     JS_SetOpaque(external, NULL);
 
-    JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+    err = JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+
+    if (err < 0) {
+      JS_FreeValue(env->context, external);
+
+      JS_FreeAtom(env->context, atom);
+
+      return -1;
+    }
   }
 
   JS_FreeAtom(env->context, atom);
@@ -1582,7 +1633,9 @@ js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb 
 
   JS_SetOpaque(external, prev);
 
-  if (result) js_create_reference(env, object, 0, result);
+  JS_FreeValue(env->context, external);
+
+  if (result) return js_create_reference(env, object, 0, result);
 
   return 0;
 }
@@ -2000,6 +2053,8 @@ on_function_finalize (JSRuntime *runtime, JSValue value) {
 
 static JSValue
 on_function_call (JSContext *context, JSValueConst receiver, int argc, JSValueConst *argv, int magic, JSValue *data) {
+  int err;
+
   js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_function_class_id);
 
   js_env_t *env = callback->env;
@@ -2013,24 +2068,24 @@ on_function_call (JSContext *context, JSValueConst receiver, int argc, JSValueCo
   };
 
   js_handle_scope_t *scope;
-  js_open_handle_scope(env, &scope);
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
 
   js_value_t *result = callback->cb(env, &callback_info);
 
-  JSValue value, error;
+  JSValue value, error = JS_GetException(env->context);
 
-  if (result == NULL) value = JS_UNDEFINED;
-  else value = JS_DupValue(env->context, result->value);
+  if (JS_IsNull(error)) {
+    if (result) value = JS_DupValue(env->context, result->value);
+    else value = JS_UNDEFINED;
+  } else {
+    if (result) JS_FreeValue(env->context, result->value);
 
-  error = JS_GetException(env->context);
-
-  if (!JS_IsNull(error)) {
-    JS_FreeValue(env->context, value);
-
-    value = JS_Throw(env->context, JS_DupValue(env->context, error));
+    value = JS_Throw(env->context, error);
   }
 
-  js_close_handle_scope(env, scope);
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
 
   return value;
 }
@@ -2154,7 +2209,7 @@ js_create_function_with_source (js_env_t *env, const char *name, size_t name_len
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -2391,8 +2446,6 @@ int
 js_resolve_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolution) {
   JSValue global = JS_GetGlobalObject(env->context);
 
-  JS_DupValue(env->context, resolution->value);
-
   JSValue result = JS_Call(env->context, deferred->resolve, global, 1, &resolution->value);
 
   if (env->depth == 0) run_microtasks(env);
@@ -2410,8 +2463,6 @@ js_resolve_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolut
 int
 js_reject_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolution) {
   JSValue global = JS_GetGlobalObject(env->context);
-
-  JS_DupValue(env->context, resolution->value);
 
   JSValue result = JS_Call(env->context, deferred->reject, global, 1, &resolution->value);
 
@@ -3270,16 +3321,10 @@ js_get_value_string_utf8 (js_env_t *env, js_value_t *value, utf8_t *str, size_t 
 
     memcpy(str, cstr, written);
 
-    if (written < len) {
-      str[written] = '\0';
-    }
+    if (written < len) str[written] = '\0';
 
-    if (result) {
-      *result = written;
-    }
-  } else if (result) {
-    *result = 0;
-  }
+    if (result) *result = written;
+  } else if (result) *result = 0;
 
   JS_FreeCString(env->context, cstr);
 
@@ -3300,16 +3345,10 @@ js_get_value_string_utf16le (js_env_t *env, js_value_t *value, utf16_t *str, siz
 
     utf8_convert_to_utf16le((utf8_t *) cstr, cstr_len, str);
 
-    if (written < len) {
-      str[written] = L'\0';
-    }
+    if (written < len) str[written] = L'\0';
 
-    if (result) {
-      *result = written;
-    }
-  } else if (result) {
-    *result = 0;
-  }
+    if (result) *result = written;
+  } else if (result) *result = 0;
 
   JS_FreeCString(env->context, cstr);
 
@@ -3375,7 +3414,7 @@ js_get_property_names (js_env_t *env, js_value_t *object, js_value_t **result) {
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3426,7 +3465,7 @@ js_get_property (js_env_t *env, js_value_t *object, js_value_t *key, js_value_t 
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3464,7 +3503,7 @@ js_has_property (js_env_t *env, js_value_t *object, js_value_t *key, bool *resul
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3493,7 +3532,7 @@ js_set_property (js_env_t *env, js_value_t *object, js_value_t *key, js_value_t 
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3520,7 +3559,7 @@ js_delete_property (js_env_t *env, js_value_t *object, js_value_t *key, bool *re
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3545,7 +3584,7 @@ js_get_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3583,7 +3622,7 @@ js_has_named_property (js_env_t *env, js_value_t *object, const char *name, bool
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3608,7 +3647,7 @@ js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3635,7 +3674,7 @@ js_delete_named_property (js_env_t *env, js_value_t *object, const char *name, b
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3660,7 +3699,7 @@ js_get_element (js_env_t *env, js_value_t *object, uint32_t index, js_value_t **
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3698,7 +3737,7 @@ js_has_element (js_env_t *env, js_value_t *object, uint32_t index, bool *result)
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3723,7 +3762,7 @@ js_set_element (js_env_t *env, js_value_t *object, uint32_t index, js_value_t *v
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3750,7 +3789,7 @@ js_delete_element (js_env_t *env, js_value_t *object, uint32_t index, bool *resu
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -3988,7 +4027,7 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *function, size_t 
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -4029,7 +4068,7 @@ js_call_function_with_checkpoint (js_env_t *env, js_value_t *receiver, js_value_
   if (JS_IsException(value)) {
     JSValue error = JS_GetException(env->context);
 
-    on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+    on_uncaught_exception(env->context, error);
 
     return -1;
   }
@@ -4068,7 +4107,7 @@ js_new_instance (js_env_t *env, js_value_t *constructor, size_t argc, js_value_t
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
-      on_uncaught_exception(env->context, JS_DupValue(env->context, error));
+      on_uncaught_exception(env->context, error);
     }
 
     return -1;
@@ -4090,7 +4129,7 @@ js_new_instance (js_env_t *env, js_value_t *constructor, size_t argc, js_value_t
 
 int
 js_throw (js_env_t *env, js_value_t *error) {
-  JS_Throw(env->context, error->value);
+  JS_Throw(env->context, JS_DupValue(env->context, error->value));
 
   return 0;
 }
@@ -4339,7 +4378,7 @@ js_get_and_clear_last_exception (js_env_t *env, js_value_t **result) {
 
 int
 js_fatal_exception (js_env_t *env, js_value_t *error) {
-  on_uncaught_exception(env->context, error->value);
+  on_uncaught_exception(env->context, JS_DupValue(env->context, error->value));
 
   return 0;
 }
@@ -4348,9 +4387,7 @@ int
 js_adjust_external_memory (js_env_t *env, int64_t change_in_bytes, int64_t *result) {
   env->external_memory += change_in_bytes;
 
-  if (result) {
-    *result = env->external_memory;
-  }
+  if (result) *result = env->external_memory;
 
   return 0;
 }
