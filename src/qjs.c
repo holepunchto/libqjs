@@ -2827,7 +2827,7 @@ js_create_dataview (js_env_t *env, size_t len, js_value_t *arraybuffer, size_t o
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "DataView");
 
-  JSValue argv[3] = {JS_DupValue(env->context, arraybuffer->value), JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
+  JSValue argv[3] = {arraybuffer->value, JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
 
   JSValue typedarray = JS_CallConstructor(env->context, constructor, 3, argv);
 
