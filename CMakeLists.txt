@@ -48,7 +48,7 @@ target_include_directories(
     $<TARGET_PROPERTY:utf,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
-add_library(qjs_shared SHARED $<TARGET_OBJECTS:qjs> $<TARGET_OBJECTS:quickjs>)
+add_library(qjs_shared SHARED $<TARGET_OBJECTS:qjs>)
 
 set_target_properties(
   qjs_shared
@@ -63,9 +63,10 @@ target_link_libraries(
     uv
     mem_shared
     utf_shared
+    quickjs_shared
 )
 
-add_library(qjs_static STATIC $<TARGET_OBJECTS:qjs> $<TARGET_OBJECTS:quickjs>)
+add_library(qjs_static STATIC $<TARGET_OBJECTS:qjs>)
 
 set_target_properties(
   qjs_static
@@ -80,6 +81,7 @@ target_link_libraries(
     uv_a
     mem_static
     utf_static
+    quickjs_static
 )
 
 install(TARGETS qjs_shared qjs_static)
