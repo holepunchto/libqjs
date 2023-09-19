@@ -596,11 +596,6 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
     (void *) heap
   );
 
-  JS_SetMaxStackSize(runtime, 864 * 1024);
-  JS_SetCanBlock(runtime, false);
-  JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
-  JS_SetHostPromiseRejectionTracker(runtime, on_promise_rejection, NULL);
-
   JS_SetSharedArrayBufferFunctions(
     runtime,
     &(JSSharedArrayBufferFunctions){
@@ -610,6 +605,11 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
       .sab_opaque = (void *) heap,
     }
   );
+
+  JS_SetMaxStackSize(runtime, 864 * 1024);
+  JS_SetCanBlock(runtime, false);
+  JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
+  JS_SetHostPromiseRejectionTracker(runtime, on_promise_rejection, NULL);
 
   if (options && options->memory_limit) {
     JS_SetMemoryLimit(runtime, options->memory_limit);
@@ -2802,7 +2802,7 @@ js_create_typedarray (js_env_t *env, js_typedarray_type_t type, size_t len, js_v
     break;
   }
 
-  JSValue argv[3] = {JS_DupValue(env->context, arraybuffer->value), JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
+  JSValue argv[3] = {arraybuffer->value, JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
 
   JSValue typedarray = JS_CallConstructor(env->context, constructor, 3, argv);
 
