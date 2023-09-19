@@ -112,7 +112,6 @@ struct js_deferred_s {
 };
 
 struct js_finalizer_s {
-  js_env_t *env;
   void *data;
   js_finalize_cb finalize_cb;
   void *finalize_hint;
@@ -124,7 +123,6 @@ struct js_finalizer_list_s {
 };
 
 struct js_delegate_s {
-  js_env_t *env;
   js_delegate_callbacks_t callbacks;
   void *data;
   js_finalize_cb finalize_cb;
@@ -132,7 +130,6 @@ struct js_delegate_s {
 };
 
 struct js_callback_s {
-  js_env_t *env;
   js_function_cb cb;
   void *data;
 };
@@ -1137,7 +1134,6 @@ js_set_weak_reference (js_env_t *env, js_ref_t *reference) {
 
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
-  finalizer->env = env;
   finalizer->data = reference;
   finalizer->finalize_cb = on_reference_finalize;
   finalizer->finalize_hint = NULL;
@@ -1304,9 +1300,9 @@ on_constructor_call (JSContext *context, JSValueConst new_target, int argc, JSVa
 
   JS_FreeValue(context, prototype);
 
-  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_constructor_class_id);
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_env_t *env = callback->env;
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_constructor_class_id);
 
   js_callback_info_t callback_info = {
     .callback = callback,
@@ -1347,7 +1343,6 @@ js_define_class (js_env_t *env, const char *name, size_t len, js_function_cb con
 
   js_callback_t *callback = malloc(sizeof(js_callback_t));
 
-  callback->env = env;
   callback->cb = constructor;
   callback->data = data;
 
@@ -1499,7 +1494,6 @@ js_wrap (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_
 
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
-  finalizer->env = env;
   finalizer->data = data;
   finalizer->finalize_cb = finalize_cb;
   finalizer->finalize_hint = finalize_hint;
@@ -1575,15 +1569,16 @@ js_remove_wrap (js_env_t *env, js_value_t *object, void **result) {
 
 static void
 on_finalizer_finalize (JSRuntime *runtime, JSValue value) {
-  js_finalizer_list_t *next = (js_finalizer_list_t *) JS_GetOpaque(value, js_finalizer_class_id);
+  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
+  js_finalizer_list_t *next = (js_finalizer_list_t *) JS_GetOpaque(value, js_finalizer_class_id);
   js_finalizer_list_t *prev = NULL;
 
   while (next) {
     js_finalizer_t *finalizer = &next->finalizer;
 
     if (finalizer->finalize_cb) {
-      finalizer->finalize_cb(finalizer->env, finalizer->data, finalizer->finalize_hint);
+      finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
     }
 
     prev = next;
@@ -1601,7 +1596,6 @@ js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb 
 
   js_finalizer_t *finalizer = &prev->finalizer;
 
-  finalizer->env = env;
   finalizer->data = data;
   finalizer->finalize_cb = finalize_cb;
   finalizer->finalize_hint = finalize_hint;
@@ -1643,9 +1637,9 @@ js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb 
 
 static int
 on_delegate_get_own_property (JSContext *context, JSPropertyDescriptor *descriptor, JSValueConst object, JSAtom name) {
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_env_t *env = delegate->env;
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
 
   if (delegate->callbacks.has) {
     JSValue property = JS_AtomToValue(env->context, name);
@@ -1697,9 +1691,9 @@ on_delegate_get_own_property (JSContext *context, JSPropertyDescriptor *descript
 
 static int
 on_delegate_get_own_property_names (JSContext *context, JSPropertyEnum **pproperties, uint32_t *plen, JSValueConst object) {
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_env_t *env = delegate->env;
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
 
   if (delegate->callbacks.own_keys) {
     js_value_t *result = delegate->callbacks.own_keys(env, delegate->data);
@@ -1742,9 +1736,9 @@ on_delegate_get_own_property_names (JSContext *context, JSPropertyEnum **pproper
 
 static int
 on_delegate_delete_property (JSContext *context, JSValueConst object, JSAtom name) {
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_env_t *env = delegate->env;
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
 
   if (delegate->callbacks.delete_property) {
     JSValue property = JS_AtomToValue(env->context, name);
@@ -1768,9 +1762,9 @@ on_delegate_delete_property (JSContext *context, JSValueConst object, JSAtom nam
 
 static int
 on_delegate_set_property (JSContext *context, JSValueConst object, JSAtom name, JSValueConst value, JSValueConst receiver, int flags) {
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_env_t *env = delegate->env;
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
 
   if (delegate->callbacks.set) {
     JSValue property = JS_AtomToValue(env->context, name);
@@ -1794,10 +1788,12 @@ on_delegate_set_property (JSContext *context, JSValueConst object, JSAtom name, 
 
 static void
 on_delegate_finalize (JSRuntime *runtime, JSValue value) {
+  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
+
   js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(value, js_delegate_class_id);
 
   if (delegate->finalize_cb) {
-    delegate->finalize_cb(delegate->env, delegate->data, delegate->finalize_hint);
+    delegate->finalize_cb(env, delegate->data, delegate->finalize_hint);
   }
 
   free(delegate);
@@ -1807,7 +1803,6 @@ int
 js_create_delegate (js_env_t *env, const js_delegate_callbacks_t *callbacks, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
   js_delegate_t *delegate = malloc(sizeof(js_delegate_t));
 
-  delegate->env = env;
   delegate->data = data;
   delegate->finalize_cb = finalize_cb;
   delegate->finalize_hint = finalize_hint;
@@ -2056,9 +2051,9 @@ static JSValue
 on_function_call (JSContext *context, JSValueConst receiver, int argc, JSValueConst *argv, int magic, JSValue *data) {
   int err;
 
-  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_function_class_id);
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_env_t *env = callback->env;
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js_function_class_id);
 
   js_callback_info_t callback_info = {
     .callback = callback,
@@ -2095,7 +2090,6 @@ int
 js_create_function (js_env_t *env, const char *name, size_t len, js_function_cb cb, void *data, js_value_t **result) {
   js_callback_t *callback = malloc(sizeof(js_callback_t));
 
-  callback->env = env;
   callback->cb = cb;
   callback->data = data;
 
@@ -2269,10 +2263,12 @@ js_create_array_with_length (js_env_t *env, size_t len, js_value_t **result) {
 
 static void
 on_external_finalize (JSRuntime *runtime, JSValue value) {
+  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
+
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value, js_external_class_id);
 
   if (finalizer->finalize_cb) {
-    finalizer->finalize_cb(finalizer->env, finalizer->data, finalizer->finalize_hint);
+    finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
   }
 
   free(finalizer);
@@ -2282,7 +2278,6 @@ int
 js_create_external (js_env_t *env, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
-  finalizer->env = env;
   finalizer->data = data;
   finalizer->finalize_cb = finalize_cb;
   finalizer->finalize_hint = finalize_hint;
@@ -2516,7 +2511,7 @@ js_get_promise_result (js_env_t *env, js_value_t *promise, js_value_t **result) 
 }
 
 static void
-on_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
+on_arraybuffer_finalize (JSRuntime *runtime, void *opaque, void *ptr) {
   mem_free(ptr);
 }
 
@@ -2542,11 +2537,11 @@ js_create_arraybuffer (js_env_t *env, size_t len, void **data, js_value_t **resu
 }
 
 static void
-on_backed_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
+on_backed_arraybuffer_finalize (JSRuntime *runtime, void *opaque, void *ptr) {
   js_arraybuffer_backing_store_t *backing_store = (js_arraybuffer_backing_store_t *) opaque;
 
   if (--backing_store->references == 0) {
-    JS_FreeValueRT(rt, backing_store->owner);
+    JS_FreeValueRT(runtime, backing_store->owner);
 
     free(backing_store);
   }
@@ -2578,7 +2573,7 @@ js_create_arraybuffer_with_backing_store (js_env_t *env, js_arraybuffer_backing_
 }
 
 static void
-on_unsafe_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
+on_unsafe_arraybuffer_finalize (JSRuntime *runtime, void *opaque, void *ptr) {
   mem_free(ptr);
 }
 
@@ -2604,11 +2599,13 @@ js_create_unsafe_arraybuffer (js_env_t *env, size_t len, void **data, js_value_t
 }
 
 static void
-on_external_arraybuffer_finalize (JSRuntime *rt, void *opaque, void *ptr) {
+on_external_arraybuffer_finalize (JSRuntime *runtime, void *opaque, void *ptr) {
+  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
+
   js_finalizer_t *finalizer = (js_finalizer_t *) opaque;
 
   if (finalizer->finalize_cb) {
-    finalizer->finalize_cb(finalizer->env, finalizer->data, finalizer->finalize_hint);
+    finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
   }
 
   free(finalizer);
@@ -2618,7 +2615,6 @@ int
 js_create_external_arraybuffer (js_env_t *env, void *data, size_t len, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
-  finalizer->env = env;
   finalizer->data = data;
   finalizer->finalize_cb = finalize_cb;
   finalizer->finalize_hint = finalize_hint;
