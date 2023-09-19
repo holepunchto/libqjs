@@ -144,7 +144,6 @@ struct js_callback_info_s {
 
 struct js_arraybuffer_header_s {
   atomic_int references;
-  js_finalizer_t *finalizer;
   size_t len;
   uint8_t data[];
 };
@@ -2659,7 +2658,6 @@ js_create_sharedarraybuffer (js_env_t *env, size_t len, void **data, js_value_t 
   js_arraybuffer_header_t *header = mem_zalloc(env->heap, sizeof(js_arraybuffer_header_t) + len);
 
   header->references = 0;
-  header->finalizer = NULL;
   header->len = len;
 
   if (data) {
