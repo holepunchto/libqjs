@@ -3,31 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(qjs C)
 
 if(NOT TARGET quickjs)
-  find_program(quickjs_prebuilds NAMES quickjs-prebuilds)
-
-  execute_process(
-    COMMAND ${quickjs_prebuilds} paths lib
-    OUTPUT_VARIABLE quickjs
-  )
-
-  execute_process(
-    COMMAND ${quickjs_prebuilds} paths include
-    OUTPUT_VARIABLE quickjs_include
-  )
-
-  add_library(quickjs STATIC IMPORTED)
-
-  set_target_properties(
-    quickjs
-    PROPERTIES
-    IMPORTED_LOCATION ${quickjs}
-  )
-
-  target_include_directories(
-    quickjs
-    INTERFACE
-      ${quickjs_include}
-  )
+  add_subdirectory(vendor/quickjs EXCLUDE_FROM_ALL)
 endif()
 
 if(NOT TARGET uv)

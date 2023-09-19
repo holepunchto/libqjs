@@ -14,3 +14,7 @@
 	path = vendor/libutf
 	url = git@github.com:holepunchto/libutf.git
 	shallow = true
+[submodule "vendor/quickjs"]
+	path = vendor/quickjs
+	url = git@github.com:holepunchto/quickjs.git
+	shallow = true

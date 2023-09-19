@@ -306,12 +306,15 @@ js_get_platform_loop (js_platform_t *platform, uv_loop_t **result) {
 
 static JSModuleDef *
 on_resolve_module (JSContext *context, const char *name, void *opaque) {
+  int err;
+
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
   js_module_resolver_t *resolver = env->resolvers;
 
   js_handle_scope_t *scope;
-  js_open_handle_scope(env, &scope);
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
 
   js_module_t *module;
 
@@ -335,7 +338,7 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
     if (module == NULL) return NULL;
 
     if (module->definition == NULL) {
-      int err = js_instantiate_module(
+      err = js_instantiate_module(
         env,
         module,
         resolver->cb,
@@ -368,25 +371,27 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
 
   JS_FreeValue(env->context, specifier.value);
 
-  js_close_handle_scope(env, scope);
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
 
   return module->definition;
 }
 
 static void
 on_uncaught_exception (JSContext *context, JSValue error) {
+  int err;
+
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
   if (env->on_uncaught_exception) {
-    js_value_t wrapper;
-    wrapper.value = error;
-
     js_handle_scope_t *scope;
-    js_open_handle_scope(env, &scope);
+    err = js_open_handle_scope(env, &scope);
+    assert(err == 0);
 
-    env->on_uncaught_exception(env, &wrapper, env->uncaught_exception_data);
+    env->on_uncaught_exception(env, &(js_value_t){error}, env->uncaught_exception_data);
 
-    js_close_handle_scope(env, scope);
+    err = js_close_handle_scope(env, scope);
+    assert(err == 0);
   } else {
     JS_Throw(context, error);
   }
@@ -394,12 +399,15 @@ on_uncaught_exception (JSContext *context, JSValue error) {
 
 static void
 on_unhandled_rejection (JSContext *context, JSValue promise, JSValue reason) {
+  int err;
+
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
   if (env->on_unhandled_rejection == NULL) goto done;
 
   js_handle_scope_t *scope;
-  js_open_handle_scope(env, &scope);
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
 
   env->on_unhandled_rejection(
     env,
@@ -408,7 +416,8 @@ on_unhandled_rejection (JSContext *context, JSValue promise, JSValue reason) {
     env->unhandled_rejection_data
   );
 
-  js_close_handle_scope(env, scope);
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
 
 done:
   JS_FreeValue(context, promise);
@@ -452,10 +461,12 @@ on_promise_rejection (JSContext *context, JSValueConst promise, JSValueConst rea
 
 static inline void
 run_microtasks (js_env_t *env) {
+  int err;
+
   JSContext *context;
 
   for (;;) {
-    int err = JS_ExecutePendingJob(env->runtime, &context);
+    err = JS_ExecutePendingJob(env->runtime, &context);
     if (err <= 0) break;
 
     JSValue error = JS_GetException(context);
@@ -808,7 +819,7 @@ js_close_escapable_handle_scope (js_env_t *env, js_escapable_handle_scope_t *sco
   return err;
 }
 
-static int
+static void
 js_attach_to_handle_scope (js_env_t *env, js_handle_scope_t *scope, js_value_t *value) {
   if (scope->len >= scope->capacity) {
     if (scope->capacity) scope->capacity *= 2;
@@ -818,8 +829,6 @@ js_attach_to_handle_scope (js_env_t *env, js_handle_scope_t *scope, js_value_t *
   }
 
   scope->values[scope->len++] = value;
-
-  return 0;
 }
 
 int
@@ -1775,6 +1784,8 @@ on_type_tag_finalize (JSRuntime *runtime, JSValue value) {
 
 int
 js_add_type_tag (js_env_t *env, js_value_t *object, const js_type_tag_t *tag) {
+  int err;
+
   JSAtom atom = JS_NewAtom(env->context, "__native_type_tag");
 
   if (JS_HasProperty(env->context, object->value, atom) == 1) {
@@ -1794,7 +1805,15 @@ js_add_type_tag (js_env_t *env, js_value_t *object, const js_type_tag_t *tag) {
 
   JS_SetOpaque(external, existing);
 
-  JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+  err = JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+
+  if (err < 0) {
+    JS_FreeValue(env->context, external);
+
+    JS_FreeAtom(env->context, atom);
+
+    return -1;
+  }
 
   JS_FreeAtom(env->context, atom);
 
@@ -1812,8 +1831,12 @@ js_check_type_tag (js_env_t *env, js_value_t *object, const js_type_tag_t *tag, 
 
     js_type_tag_t *existing = (js_type_tag_t *) JS_GetOpaque(external, js_type_tag_class_id);
 
+    JS_FreeValue(env->context, external);
+
     *result = existing->lower == tag->lower && existing->upper == tag->upper;
   }
+
+  JS_FreeAtom(env->context, atom);
 
   return 0;
 }
