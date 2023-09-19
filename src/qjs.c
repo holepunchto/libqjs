@@ -596,6 +596,11 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
     (void *) heap
   );
 
+  JS_SetMaxStackSize(runtime, 864 * 1024);
+  JS_SetCanBlock(runtime, false);
+  JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
+  JS_SetHostPromiseRejectionTracker(runtime, on_promise_rejection, NULL);
+
   JS_SetSharedArrayBufferFunctions(
     runtime,
     &(JSSharedArrayBufferFunctions){
@@ -605,25 +610,6 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
       .sab_opaque = (void *) heap,
     }
   );
-
-  JSContext *context = JS_NewContextRaw(runtime);
-
-  JS_AddIntrinsicBaseObjects(context);
-  JS_AddIntrinsicDate(context);
-  JS_AddIntrinsicEval(context);
-  JS_AddIntrinsicStringNormalize(context);
-  JS_AddIntrinsicRegExpCompiler(context);
-  JS_AddIntrinsicRegExp(context);
-  JS_AddIntrinsicJSON(context);
-  JS_AddIntrinsicProxy(context);
-  JS_AddIntrinsicMapSet(context);
-  JS_AddIntrinsicTypedArrays(context);
-  JS_AddIntrinsicPromise(context);
-  JS_AddIntrinsicBigInt(context);
-
-  JS_SetCanBlock(runtime, false);
-  JS_SetModuleLoaderFunc(runtime, NULL, on_resolve_module, NULL);
-  JS_SetHostPromiseRejectionTracker(runtime, on_promise_rejection, NULL);
 
   if (options && options->memory_limit) {
     JS_SetMemoryLimit(runtime, options->memory_limit);
@@ -646,6 +632,21 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   JS_NewClass(runtime, js_function_class_id, &js_function_class);
   JS_NewClass(runtime, js_constructor_class_id, &js_constructor_class);
   JS_NewClass(runtime, js_delegate_class_id, &js_delegate_class);
+
+  JSContext *context = JS_NewContextRaw(runtime);
+
+  JS_AddIntrinsicBaseObjects(context);
+  JS_AddIntrinsicDate(context);
+  JS_AddIntrinsicEval(context);
+  JS_AddIntrinsicStringNormalize(context);
+  JS_AddIntrinsicRegExpCompiler(context);
+  JS_AddIntrinsicRegExp(context);
+  JS_AddIntrinsicJSON(context);
+  JS_AddIntrinsicProxy(context);
+  JS_AddIntrinsicMapSet(context);
+  JS_AddIntrinsicTypedArrays(context);
+  JS_AddIntrinsicPromise(context);
+  JS_AddIntrinsicBigInt(context);
 
   js_env_t *env = malloc(sizeof(js_env_t));
 
