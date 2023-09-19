@@ -11,6 +11,9 @@ list(APPEND tests
   call-function-microtask
   call-function-microtask-nested
   call-function-throw
+  coerce-number-to-string
+  coerce-object-to-string
+  coerce-string-to-number
   create-arraybuffer
   create-arraybuffer-with-backing-store
   create-delegate
@@ -56,6 +59,7 @@ list(APPEND tests
   create-sharedarraybuffer-with-backing-store
   create-string-utf8
   create-string-utf8-with-null
+  create-uint8array
   create-unsafe-arraybuffer
   define-class
   define-class-with-value

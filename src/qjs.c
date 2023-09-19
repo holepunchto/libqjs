@@ -2852,7 +2852,7 @@ js_coerce_to_boolean (js_env_t *env, js_value_t *value, js_value_t **result) {
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Boolean");
 
-  JSValue argv[1] = {JS_DupValue(env->context, value->value)};
+  JSValue argv[1] = {value->value};
 
   JSValue boolean = JS_Call(env->context, constructor, global, 1, argv);
 
@@ -2877,7 +2877,7 @@ js_coerce_to_number (js_env_t *env, js_value_t *value, js_value_t **result) {
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Number");
 
-  JSValue argv[1] = {JS_DupValue(env->context, value->value)};
+  JSValue argv[1] = {value->value};
 
   JSValue number = JS_Call(env->context, constructor, global, 1, argv);
 
@@ -2902,7 +2902,7 @@ js_coerce_to_string (js_env_t *env, js_value_t *value, js_value_t **result) {
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "String");
 
-  JSValue argv[1] = {JS_DupValue(env->context, value->value)};
+  JSValue argv[1] = {value->value};
 
   JSValue string = JS_Call(env->context, constructor, global, 1, argv);
 
@@ -2927,7 +2927,7 @@ js_coerce_to_object (js_env_t *env, js_value_t *value, js_value_t **result) {
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Object");
 
-  JSValue argv[1] = {JS_DupValue(env->context, value->value)};
+  JSValue argv[1] = {value->value};
 
   JSValue object = JS_Call(env->context, constructor, global, 1, argv);
 
