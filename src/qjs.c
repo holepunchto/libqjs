@@ -629,21 +629,6 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   JS_NewClass(runtime, js_constructor_class_id, &js_constructor_class);
   JS_NewClass(runtime, js_delegate_class_id, &js_delegate_class);
 
-  JSContext *context = JS_NewContextRaw(runtime);
-
-  JS_AddIntrinsicBaseObjects(context);
-  JS_AddIntrinsicDate(context);
-  JS_AddIntrinsicEval(context);
-  JS_AddIntrinsicStringNormalize(context);
-  JS_AddIntrinsicRegExpCompiler(context);
-  JS_AddIntrinsicRegExp(context);
-  JS_AddIntrinsicJSON(context);
-  JS_AddIntrinsicProxy(context);
-  JS_AddIntrinsicMapSet(context);
-  JS_AddIntrinsicTypedArrays(context);
-  JS_AddIntrinsicPromise(context);
-  JS_AddIntrinsicBigInt(context);
-
   js_env_t *env = malloc(sizeof(js_env_t));
 
   env->heap = heap;
@@ -656,7 +641,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   env->depth = 0;
 
   env->runtime = runtime;
-  env->context = context;
+  env->context = JS_NewContext(runtime);
 
   env->external_memory = 0;
 
@@ -674,8 +659,8 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   env->on_dynamic_import = NULL;
   env->dynamic_import_data = NULL;
 
-  JS_SetRuntimeOpaque(runtime, env);
-  JS_SetContextOpaque(context, env);
+  JS_SetRuntimeOpaque(env->runtime, env);
+  JS_SetContextOpaque(env->context, env);
 
   err = uv_prepare_init(loop, &env->prepare);
   assert(err == 0);
