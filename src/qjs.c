@@ -1604,6 +1604,8 @@ js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb 
 
       return -1;
     }
+
+    JS_DupValue(env->context, external);
   }
 
   JS_FreeAtom(env->context, atom);
