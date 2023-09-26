@@ -3409,13 +3409,16 @@ js_get_property_names (js_env_t *env, js_value_t *object, js_value_t **result) {
     if (err < 0) goto err;
   }
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  if (result == NULL) JS_FreeValue(env->context, array);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  wrapper->value = array;
+    wrapper->value = array;
 
-  *result = wrapper;
+    *result = wrapper;
 
-  js_attach_to_handle_scope(env, env->scope, wrapper);
+    js_attach_to_handle_scope(env, env->scope, wrapper);
+  }
 
   return 0;
 
