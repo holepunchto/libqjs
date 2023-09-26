@@ -710,6 +710,8 @@ js_destroy_env (js_env_t *env) {
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
 
+  uv_ref((uv_handle_t *) &env->check);
+
   uv_close((uv_handle_t *) &env->prepare, on_handle_close);
 
   uv_close((uv_handle_t *) &env->check, on_handle_close);
