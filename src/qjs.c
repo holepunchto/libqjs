@@ -51,12 +51,16 @@ struct js_env_s {
 
   js_promise_rejection_t *promise_rejections;
 
-  js_uncaught_exception_cb on_uncaught_exception;
-  void *uncaught_exception_data;
-  js_unhandled_rejection_cb on_unhandled_rejection;
-  void *unhandled_rejection_data;
-  js_dynamic_import_cb on_dynamic_import;
-  void *dynamic_import_data;
+  struct {
+    js_uncaught_exception_cb uncaught_exception;
+    void *uncaught_exception_data;
+
+    js_unhandled_rejection_cb unhandled_rejection;
+    void *unhandled_rejection_data;
+
+    js_dynamic_import_cb dynamic_import;
+    void *dynamic_import_data;
+  } callbacks;
 };
 
 struct js_value_s {
@@ -348,7 +352,7 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
 
     definition = module->definition;
   } else {
-    if (env->on_dynamic_import == NULL) {
+    if (env->callbacks.dynamic_import == NULL) {
       js_throw_error(env, NULL, "Dynamic import() is not supported");
 
       goto done;
@@ -358,12 +362,12 @@ on_resolve_module (JSContext *context, const char *name, void *opaque) {
       .value = JS_NULL,
     };
 
-    module = env->on_dynamic_import(
+    module = env->callbacks.dynamic_import(
       env,
       &specifier,
       &assertions,
       &referrer,
-      env->dynamic_import_data
+      env->callbacks.dynamic_import_data
     );
 
     if (module == NULL) goto done;
@@ -386,12 +390,16 @@ on_uncaught_exception (JSContext *context, JSValue error) {
 
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  if (env->on_uncaught_exception) {
+  if (env->callbacks.uncaught_exception) {
     js_handle_scope_t *scope;
     err = js_open_handle_scope(env, &scope);
     assert(err == 0);
 
-    env->on_uncaught_exception(env, &(js_value_t){error}, env->uncaught_exception_data);
+    env->callbacks.uncaught_exception(
+      env,
+      &(js_value_t){error},
+      env->callbacks.uncaught_exception_data
+    );
 
     err = js_close_handle_scope(env, scope);
     assert(err == 0);
@@ -408,17 +416,17 @@ on_unhandled_rejection (JSContext *context, JSValue promise, JSValue reason) {
 
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  if (env->on_unhandled_rejection == NULL) goto done;
+  if (env->callbacks.unhandled_rejection == NULL) goto done;
 
   js_handle_scope_t *scope;
   err = js_open_handle_scope(env, &scope);
   assert(err == 0);
 
-  env->on_unhandled_rejection(
+  env->callbacks.unhandled_rejection(
     env,
     &(js_value_t){reason},
     &(js_value_t){promise},
-    env->unhandled_rejection_data
+    env->callbacks.unhandled_rejection_data
   );
 
   err = js_close_handle_scope(env, scope);
@@ -433,7 +441,7 @@ static void
 on_promise_rejection (JSContext *context, JSValueConst promise, JSValueConst reason, JS_BOOL is_handled, void *opaque) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  if (env->on_unhandled_rejection == NULL) return;
+  if (env->callbacks.unhandled_rejection == NULL) return;
 
   if (is_handled) {
     js_promise_rejection_t *next = env->promise_rejections;
@@ -465,7 +473,7 @@ on_promise_rejection (JSContext *context, JSValueConst promise, JSValueConst rea
 }
 
 static inline void
-run_microtasks (js_env_t *env) {
+on_run_microtasks (js_env_t *env) {
   int err;
 
   JSContext *context;
@@ -500,7 +508,7 @@ static void
 on_prepare (uv_prepare_t *handle);
 
 static inline void
-check_liveness (js_env_t *env) {
+on_check_liveness (js_env_t *env) {
   int err;
 
   if (true /* macrotask queue empty */) {
@@ -516,7 +524,7 @@ static void
 on_prepare (uv_prepare_t *handle) {
   js_env_t *env = (js_env_t *) handle->data;
 
-  check_liveness(env);
+  on_check_liveness(env);
 }
 
 static void
@@ -525,7 +533,7 @@ on_check (uv_check_t *handle) {
 
   if (uv_loop_alive(env->loop)) return;
 
-  check_liveness(env);
+  on_check_liveness(env);
 }
 
 static void *
@@ -650,14 +658,14 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
 
   env->promise_rejections = NULL;
 
-  env->on_uncaught_exception = NULL;
-  env->uncaught_exception_data = NULL;
+  env->callbacks.uncaught_exception = NULL;
+  env->callbacks.uncaught_exception_data = NULL;
 
-  env->on_unhandled_rejection = NULL;
-  env->unhandled_rejection_data = NULL;
+  env->callbacks.unhandled_rejection = NULL;
+  env->callbacks.unhandled_rejection_data = NULL;
 
-  env->on_dynamic_import = NULL;
-  env->dynamic_import_data = NULL;
+  env->callbacks.dynamic_import = NULL;
+  env->callbacks.dynamic_import_data = NULL;
 
   JS_SetRuntimeOpaque(env->runtime, env);
   JS_SetContextOpaque(env->context, env);
@@ -723,24 +731,24 @@ js_destroy_env (js_env_t *env) {
 
 int
 js_on_uncaught_exception (js_env_t *env, js_uncaught_exception_cb cb, void *data) {
-  env->on_uncaught_exception = cb;
-  env->uncaught_exception_data = data;
+  env->callbacks.uncaught_exception = cb;
+  env->callbacks.uncaught_exception_data = data;
 
   return 0;
 }
 
 int
 js_on_unhandled_rejection (js_env_t *env, js_unhandled_rejection_cb cb, void *data) {
-  env->on_unhandled_rejection = cb;
-  env->unhandled_rejection_data = data;
+  env->callbacks.unhandled_rejection = cb;
+  env->callbacks.unhandled_rejection_data = data;
 
   return 0;
 }
 
 int
 js_on_dynamic_import (js_env_t *env, js_dynamic_import_cb cb, void *data) {
-  env->on_dynamic_import = cb;
-  env->dynamic_import_data = data;
+  env->callbacks.dynamic_import = cb;
+  env->callbacks.dynamic_import_data = data;
 
   return 0;
 }
@@ -864,7 +872,7 @@ js_run_script (js_env_t *env, const char *file, size_t len, int offset, js_value
 
   JS_FreeCString(env->context, str);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -1025,7 +1033,7 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_resolve_cb 
 
   JS_FreeCString(env->context, str);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -1085,7 +1093,7 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
 
   JSValue value = JS_EvalFunction(env->context, module->bytecode);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -2432,7 +2440,7 @@ js_resolve_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolut
 
   JSValue result = JS_Call(env->context, deferred->resolve, global, 1, &resolution->value);
 
-  if (env->depth == 0) run_microtasks(env);
+  if (env->depth == 0) on_run_microtasks(env);
 
   JS_FreeValue(env->context, global);
   JS_FreeValue(env->context, result);
@@ -2450,7 +2458,7 @@ js_reject_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resoluti
 
   JSValue result = JS_Call(env->context, deferred->reject, global, 1, &resolution->value);
 
-  if (env->depth == 0) run_microtasks(env);
+  if (env->depth == 0) on_run_microtasks(env);
 
   JS_FreeValue(env->context, global);
   JS_FreeValue(env->context, result);
@@ -3390,7 +3398,7 @@ js_get_property_names (js_env_t *env, js_value_t *object, js_value_t **result) {
 
   err = JS_GetOwnPropertyNames(env->context, &properties, &len, object->value, JS_GPN_ENUM_ONLY | JS_GPN_STRING_MASK);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3444,7 +3452,7 @@ js_get_property (js_env_t *env, js_value_t *object, js_value_t *key, js_value_t 
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3482,7 +3490,7 @@ js_has_property (js_env_t *env, js_value_t *object, js_value_t *key, bool *resul
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3511,7 +3519,7 @@ js_set_property (js_env_t *env, js_value_t *object, js_value_t *key, js_value_t 
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3538,7 +3546,7 @@ js_delete_property (js_env_t *env, js_value_t *object, js_value_t *key, bool *re
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3563,7 +3571,7 @@ js_get_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
 
   JSValue value = JS_GetPropertyStr(env->context, object->value, name);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3601,7 +3609,7 @@ js_has_named_property (js_env_t *env, js_value_t *object, const char *name, bool
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3626,7 +3634,7 @@ js_set_named_property (js_env_t *env, js_value_t *object, const char *name, js_v
 
   int success = JS_SetPropertyStr(env->context, object->value, name, JS_DupValue(env->context, value->value));
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3653,7 +3661,7 @@ js_delete_named_property (js_env_t *env, js_value_t *object, const char *name, b
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3678,7 +3686,7 @@ js_get_element (js_env_t *env, js_value_t *object, uint32_t index, js_value_t **
 
   JSValue value = JS_GetPropertyUint32(env->context, object->value, index);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3716,7 +3724,7 @@ js_has_element (js_env_t *env, js_value_t *object, uint32_t index, bool *result)
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3741,7 +3749,7 @@ js_set_element (js_env_t *env, js_value_t *object, uint32_t index, js_value_t *v
 
   int success = JS_SetPropertyUint32(env->context, object->value, index, JS_DupValue(env->context, value->value));
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -3768,7 +3776,7 @@ js_delete_element (js_env_t *env, js_value_t *object, uint32_t index, bool *resu
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -4006,7 +4014,7 @@ js_call_function (js_env_t *env, js_value_t *recv, js_value_t *function, size_t 
 
   free(args);
 
-  if (env->depth == 1) run_microtasks(env);
+  if (env->depth == 1) on_run_microtasks(env);
 
   env->depth--;
 
@@ -4048,7 +4056,7 @@ js_call_function_with_checkpoint (js_env_t *env, js_value_t *receiver, js_value_
 
   free(args);
 
-  run_microtasks(env);
+  on_run_microtasks(env);
 
   env->depth--;
 
