@@ -75,8 +75,7 @@ struct js_handle_scope_s {
 };
 
 struct js_escapable_handle_scope_s {
-  js_handle_scope_t *scope;
-  bool escaped;
+  js_handle_scope_t *parent;
 };
 
 struct js_module_s {
@@ -769,7 +768,7 @@ js_get_env_platform (js_env_t *env, js_platform_t **result) {
 
 int
 js_open_handle_scope (js_env_t *env, js_handle_scope_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_handle_scope_t *scope = malloc(sizeof(js_handle_scope_t));
 
@@ -808,24 +807,12 @@ js_close_handle_scope (js_env_t *env, js_handle_scope_t *scope) {
 
 int
 js_open_escapable_handle_scope (js_env_t *env, js_escapable_handle_scope_t **result) {
-  if (JS_HasException(env->context)) return -1;
-
-  js_escapable_handle_scope_t *scope = malloc(sizeof(js_escapable_handle_scope_t));
-
-  scope->escaped = false;
-
-  return js_open_handle_scope(env, &scope->scope);
+  return js_open_handle_scope(env, (js_handle_scope_t **) result);
 }
 
 int
 js_close_escapable_handle_scope (js_env_t *env, js_escapable_handle_scope_t *scope) {
-  // Allow continuing even with a pending exception
-
-  int err = js_close_handle_scope(env, scope->scope);
-
-  free(scope);
-
-  return err;
+  return js_close_handle_scope(env, (js_handle_scope_t *) scope);
 }
 
 static inline void
@@ -844,21 +831,13 @@ int
 js_escape_handle (js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t *escapee, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  if (scope->escaped) {
-    js_throw_error(env, NULL, "Scope has already been escaped");
-
-    return -1;
-  }
-
-  scope->escaped = true;
-
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
   wrapper->value = JS_DupValue(env->context, escapee->value);
 
   *result = wrapper;
 
-  js_attach_to_handle_scope(env, scope->scope->parent, wrapper);
+  js_attach_to_handle_scope(env, scope->parent, wrapper);
 
   return 0;
 }
@@ -994,7 +973,7 @@ js_delete_module (js_env_t *env, js_module_t *module) {
 
 int
 js_get_module_name (js_env_t *env, js_module_t *module, const char **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = module->name;
 
@@ -1003,7 +982,7 @@ js_get_module_name (js_env_t *env, js_module_t *module, const char **result) {
 
 int
 js_get_module_namespace (js_env_t *env, js_module_t *module, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -1022,9 +1001,15 @@ js_set_module_export (js_env_t *env, js_module_t *module, js_value_t *name, js_v
 
   const char *str = JS_ToCString(env->context, name->value);
 
-  JS_SetModuleExport(env->context, module->definition, str, JS_DupValue(env->context, value->value));
+  int success = JS_SetModuleExport(env->context, module->definition, str, JS_DupValue(env->context, value->value));
 
   JS_FreeCString(env->context, str);
+
+  if (success < 0) {
+    js_throw_error(env, NULL, "Could not set module export");
+
+    return -1;
+  }
 
   return 0;
 }
@@ -1200,7 +1185,7 @@ js_clear_weak_reference (js_env_t *env, js_ref_t *reference) {
 
 int
 js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_ref_t *reference = malloc(sizeof(js_ref_t));
 
@@ -1222,14 +1207,6 @@ js_create_reference (js_env_t *env, js_value_t *value, uint32_t count, js_ref_t 
 
     if (reference->count == 0) js_set_weak_reference(env, reference);
   } else {
-    if (reference->count == 0) {
-      js_throw_errorf(env, NULL, "Cannot make weak reference to non-object type");
-
-      free(reference);
-
-      return -1;
-    }
-
     reference->symbol = JS_NULL;
   }
 
@@ -1257,7 +1234,7 @@ js_delete_reference (js_env_t *env, js_ref_t *reference) {
 
 int
 js_reference_ref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   reference->count++;
 
@@ -1272,25 +1249,17 @@ js_reference_ref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
 
 int
 js_reference_unref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
-  if (reference->count == 0) {
-    js_throw_error(env, NULL, "Cannot decrease reference count");
+  if (reference->count > 0) {
+    reference->count--;
 
-    return -1;
-  }
-
-  if (reference->count == 1) {
-    if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
-      js_set_weak_reference(env, reference);
-    } else {
-      js_throw_errorf(env, NULL, "Cannot make weak reference to non-object type");
-
-      return -1;
+    if (reference->count == 1) {
+      if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
+        js_set_weak_reference(env, reference);
+      }
     }
   }
-
-  reference->count--;
 
   if (result) *result = reference->count;
 
@@ -1299,7 +1268,7 @@ js_reference_unref (js_env_t *env, js_ref_t *reference, uint32_t *result) {
 
 int
 js_get_reference_value (js_env_t *env, js_ref_t *reference, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   if (reference->finalized) *result = NULL;
   else {
@@ -1609,78 +1578,6 @@ js_remove_wrap (js_env_t *env, js_value_t *object, void **result) {
   return 0;
 }
 
-static void
-on_finalizer_finalize (JSRuntime *runtime, JSValue value) {
-  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
-
-  js_finalizer_list_t *next = (js_finalizer_list_t *) JS_GetOpaque(value, js_finalizer_class_id);
-  js_finalizer_list_t *prev = NULL;
-
-  while (next) {
-    js_finalizer_t *finalizer = &next->finalizer;
-
-    if (finalizer->finalize_cb) {
-      finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
-    }
-
-    prev = next;
-    next = next->next;
-
-    free(prev);
-  }
-}
-
-int
-js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_ref_t **result) {
-  if (JS_HasException(env->context)) return -1;
-
-  int err;
-
-  js_finalizer_list_t *prev = malloc(sizeof(js_finalizer_list_t));
-
-  js_finalizer_t *finalizer = &prev->finalizer;
-
-  finalizer->data = data;
-  finalizer->finalize_cb = finalize_cb;
-  finalizer->finalize_hint = finalize_hint;
-
-  JSAtom atom = JS_NewAtom(env->context, "__native_finalizer");
-
-  JSValue external;
-
-  if (JS_HasProperty(env->context, object->value, atom) == 1) {
-    external = JS_GetProperty(env->context, object->value, atom);
-  } else {
-    external = JS_NewObjectClass(env->context, js_finalizer_class_id);
-
-    JS_SetOpaque(external, NULL);
-
-    err = JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
-
-    if (err < 0) {
-      JS_FreeValue(env->context, external);
-
-      JS_FreeAtom(env->context, atom);
-
-      return -1;
-    }
-
-    JS_DupValue(env->context, external);
-  }
-
-  JS_FreeAtom(env->context, atom);
-
-  prev->next = (js_finalizer_list_t *) JS_GetOpaque(external, js_finalizer_class_id);
-
-  JS_SetOpaque(external, prev);
-
-  JS_FreeValue(env->context, external);
-
-  if (result) return js_create_reference(env, object, 0, result);
-
-  return 0;
-}
-
 static int
 on_delegate_get_own_property (JSContext *context, JSPropertyDescriptor *descriptor, JSValueConst object, JSAtom name) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
@@ -1847,7 +1744,7 @@ on_delegate_finalize (JSRuntime *runtime, JSValue value) {
 
 int
 js_create_delegate (js_env_t *env, const js_delegate_callbacks_t *callbacks, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_delegate_t *delegate = malloc(sizeof(js_delegate_t));
 
@@ -1868,6 +1765,71 @@ js_create_delegate (js_env_t *env, const js_delegate_callbacks_t *callbacks, voi
   *result = wrapper;
 
   js_attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+static void
+on_finalizer_finalize (JSRuntime *runtime, JSValue value) {
+  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
+
+  js_finalizer_list_t *next = (js_finalizer_list_t *) JS_GetOpaque(value, js_finalizer_class_id);
+  js_finalizer_list_t *prev = NULL;
+
+  while (next) {
+    js_finalizer_t *finalizer = &next->finalizer;
+
+    if (finalizer->finalize_cb) {
+      finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
+    }
+
+    prev = next;
+    next = next->next;
+
+    free(prev);
+  }
+}
+
+int
+js_add_finalizer (js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_ref_t **result) {
+  // Allow continuing even with a pending exception
+
+  int err;
+
+  js_finalizer_list_t *prev = malloc(sizeof(js_finalizer_list_t));
+
+  js_finalizer_t *finalizer = &prev->finalizer;
+
+  finalizer->data = data;
+  finalizer->finalize_cb = finalize_cb;
+  finalizer->finalize_hint = finalize_hint;
+
+  JSAtom atom = JS_NewAtom(env->context, "__native_finalizer");
+
+  JSValue external;
+
+  if (JS_HasProperty(env->context, object->value, atom) == 1) {
+    external = JS_GetProperty(env->context, object->value, atom);
+  } else {
+    external = JS_NewObjectClass(env->context, js_finalizer_class_id);
+
+    JS_SetOpaque(external, NULL);
+
+    err = JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+    assert(err >= 0);
+
+    JS_DupValue(env->context, external);
+  }
+
+  JS_FreeAtom(env->context, atom);
+
+  prev->next = (js_finalizer_list_t *) JS_GetOpaque(external, js_finalizer_class_id);
+
+  JS_SetOpaque(external, prev);
+
+  JS_FreeValue(env->context, external);
+
+  if (result) return js_create_reference(env, object, 0, result);
 
   return 0;
 }
@@ -1905,14 +1867,7 @@ js_add_type_tag (js_env_t *env, js_value_t *object, const js_type_tag_t *tag) {
   JS_SetOpaque(external, existing);
 
   err = JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
-
-  if (err < 0) {
-    JS_FreeValue(env->context, external);
-
-    JS_FreeAtom(env->context, atom);
-
-    return -1;
-  }
+  assert(err >= 0);
 
   JS_FreeAtom(env->context, atom);
 
@@ -1944,7 +1899,7 @@ js_check_type_tag (js_env_t *env, js_value_t *object, const js_type_tag_t *tag, 
 
 int
 js_create_int32 (js_env_t *env, int32_t value, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -1959,7 +1914,7 @@ js_create_int32 (js_env_t *env, int32_t value, js_value_t **result) {
 
 int
 js_create_uint32 (js_env_t *env, uint32_t value, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -1974,7 +1929,7 @@ js_create_uint32 (js_env_t *env, uint32_t value, js_value_t **result) {
 
 int
 js_create_int64 (js_env_t *env, int64_t value, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -1989,7 +1944,7 @@ js_create_int64 (js_env_t *env, int64_t value, js_value_t **result) {
 
 int
 js_create_double (js_env_t *env, double value, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2004,7 +1959,7 @@ js_create_double (js_env_t *env, double value, js_value_t **result) {
 
 int
 js_create_bigint_int64 (js_env_t *env, int64_t value, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2019,7 +1974,7 @@ js_create_bigint_int64 (js_env_t *env, int64_t value, js_value_t **result) {
 
 int
 js_create_bigint_uint64 (js_env_t *env, uint64_t value, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2034,7 +1989,7 @@ js_create_bigint_uint64 (js_env_t *env, uint64_t value, js_value_t **result) {
 
 int
 js_create_string_utf8 (js_env_t *env, const utf8_t *str, size_t len, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2053,7 +2008,7 @@ js_create_string_utf8 (js_env_t *env, const utf8_t *str, size_t len, js_value_t 
 
 int
 js_create_string_utf16le (js_env_t *env, const utf16_t *str, size_t len, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2076,7 +2031,7 @@ js_create_string_utf16le (js_env_t *env, const utf16_t *str, size_t len, js_valu
 
 int
 js_create_symbol (js_env_t *env, js_value_t *description, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Symbol");
@@ -2099,7 +2054,7 @@ js_create_symbol (js_env_t *env, js_value_t *description, js_value_t **result) {
 
 int
 js_create_object (js_env_t *env, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2304,7 +2259,7 @@ js_create_function_with_ffi (js_env_t *env, const char *name, size_t len, js_fun
 
 int
 js_create_array (js_env_t *env, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2319,7 +2274,7 @@ js_create_array (js_env_t *env, js_value_t **result) {
 
 int
 js_create_array_with_length (js_env_t *env, size_t len, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Array");
@@ -2356,7 +2311,7 @@ on_external_finalize (JSRuntime *runtime, JSValue value) {
 
 int
 js_create_external (js_env_t *env, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
@@ -2381,7 +2336,7 @@ js_create_external (js_env_t *env, void *data, js_finalize_cb finalize_cb, void 
 
 int
 js_create_date (js_env_t *env, double time, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2396,7 +2351,7 @@ js_create_date (js_env_t *env, double time, js_value_t **result) {
 
 int
 js_create_error (js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Error");
@@ -2425,7 +2380,7 @@ js_create_error (js_env_t *env, js_value_t *code, js_value_t *message, js_value_
 
 int
 js_create_type_error (js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "TypeError");
@@ -2454,7 +2409,7 @@ js_create_type_error (js_env_t *env, js_value_t *code, js_value_t *message, js_v
 
 int
 js_create_range_error (js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "RangeError");
@@ -2483,7 +2438,7 @@ js_create_range_error (js_env_t *env, js_value_t *code, js_value_t *message, js_
 
 int
 js_create_syntax_error (js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "SyntaxError");
@@ -2512,7 +2467,7 @@ js_create_syntax_error (js_env_t *env, js_value_t *code, js_value_t *message, js
 
 int
 js_create_promise (js_env_t *env, js_deferred_t **deferred, js_value_t **promise) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *deferred = malloc(sizeof(js_deferred_t));
 
@@ -2534,7 +2489,7 @@ js_create_promise (js_env_t *env, js_deferred_t **deferred, js_value_t **promise
 
 static inline int
 js_conclude_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resolution, bool resolved) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
 
@@ -2564,7 +2519,7 @@ js_reject_deferred (js_env_t *env, js_deferred_t *deferred, js_value_t *resoluti
 
 int
 js_get_promise_state (js_env_t *env, js_value_t *promise, js_promise_state_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   switch (JS_GetPromiseState(env->context, promise->value)) {
   case JS_PROMISE_PENDING:
@@ -2583,13 +2538,9 @@ js_get_promise_state (js_env_t *env, js_value_t *promise, js_promise_state_t *re
 
 int
 js_get_promise_result (js_env_t *env, js_value_t *promise, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
-  if (JS_GetPromiseState(env->context, promise->value) == JS_PROMISE_PENDING) {
-    js_throw_error(env, NULL, "Promise is pending");
-
-    return -1;
-  }
+  assert(JS_GetPromiseState(env->context, promise->value) != JS_PROMISE_PENDING);
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -2734,7 +2685,7 @@ js_create_external_arraybuffer (js_env_t *env, void *data, size_t len, js_finali
 
 int
 js_detach_arraybuffer (js_env_t *env, js_value_t *arraybuffer) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JS_DetachArrayBuffer(env->context, arraybuffer->value);
 
@@ -2743,7 +2694,7 @@ js_detach_arraybuffer (js_env_t *env, js_value_t *arraybuffer) {
 
 int
 js_get_arraybuffer_backing_store (js_env_t *env, js_value_t *arraybuffer, js_arraybuffer_backing_store_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_arraybuffer_backing_store_t *backing_store = malloc(sizeof(js_arraybuffer_backing_store_t));
 
@@ -2837,7 +2788,7 @@ js_create_unsafe_sharedarraybuffer (js_env_t *env, size_t len, void **data, js_v
 
 int
 js_get_sharedarraybuffer_backing_store (js_env_t *env, js_value_t *sharedarraybuffer, js_arraybuffer_backing_store_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_arraybuffer_backing_store_t *backing_store = malloc(sizeof(js_arraybuffer_backing_store_t));
 
@@ -2962,7 +2913,7 @@ js_create_dataview (js_env_t *env, size_t len, js_value_t *arraybuffer, size_t o
 
 int
 js_coerce_to_boolean (js_env_t *env, js_value_t *value, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Boolean");
@@ -2973,8 +2924,6 @@ js_coerce_to_boolean (js_env_t *env, js_value_t *value, js_value_t **result) {
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
-
-  if (JS_IsException(boolean)) return -1;
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -3070,7 +3019,7 @@ js_coerce_to_object (js_env_t *env, js_value_t *value, js_value_t **result) {
 
 int
 js_typeof (js_env_t *env, js_value_t *value, js_value_type_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   if (JS_IsNumber(value->value)) {
     *result = js_number;
@@ -3101,14 +3050,18 @@ int
 js_instanceof (js_env_t *env, js_value_t *object, js_value_t *constructor, bool *result) {
   if (JS_HasException(env->context)) return -1;
 
-  *result = JS_IsInstanceOf(env->context, constructor->value, object->value);
+  int success = JS_IsInstanceOf(env->context, object->value, constructor->value);
+
+  if (success < 0) return -1;
+
+  *result = success;
 
   return 0;
 }
 
 int
 js_is_undefined (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsUndefined(value->value);
 
@@ -3117,7 +3070,7 @@ js_is_undefined (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_null (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsNull(value->value);
 
@@ -3126,7 +3079,7 @@ js_is_null (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_boolean (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsBool(value->value);
 
@@ -3135,7 +3088,7 @@ js_is_boolean (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_number (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsNumber(value->value);
 
@@ -3144,7 +3097,7 @@ js_is_number (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_string (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsString(value->value);
 
@@ -3153,7 +3106,7 @@ js_is_string (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_symbol (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsSymbol(value->value);
 
@@ -3162,7 +3115,7 @@ js_is_symbol (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_object (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsObject(value->value);
 
@@ -3171,7 +3124,7 @@ js_is_object (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_function (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsFunction(env->context, value->value);
 
@@ -3180,7 +3133,7 @@ js_is_function (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_array (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsArray(env->context, value->value);
 
@@ -3189,7 +3142,7 @@ js_is_array (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_external (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsObject(value->value) && JS_GetOpaque(value->value, js_external_class_id) != NULL;
 
@@ -3198,7 +3151,7 @@ js_is_external (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_wrapped (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSAtom atom = JS_NewAtom(env->context, "__native_external");
 
@@ -3211,7 +3164,7 @@ js_is_wrapped (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_delegate (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsObject(value->value) && JS_GetOpaque(value->value, js_delegate_class_id) != NULL;
 
@@ -3220,7 +3173,7 @@ js_is_delegate (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_bigint (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsBigInt(env->context, value->value);
 
@@ -3229,7 +3182,7 @@ js_is_bigint (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_date (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Date");
@@ -3244,7 +3197,7 @@ js_is_date (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_error (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_IsError(env->context, value->value);
 
@@ -3253,7 +3206,7 @@ js_is_error (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_promise (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Promise");
@@ -3268,7 +3221,7 @@ js_is_promise (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_arraybuffer (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "ArrayBuffer");
@@ -3283,7 +3236,7 @@ js_is_arraybuffer (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_detached_arraybuffer (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   size_t len;
 
@@ -3294,7 +3247,7 @@ js_is_detached_arraybuffer (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_sharedarraybuffer (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "SharedArrayBuffer");
@@ -3309,7 +3262,7 @@ js_is_sharedarraybuffer (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_typedarray (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
 
@@ -3352,7 +3305,7 @@ done:
 
 int
 js_is_dataview (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "DataView");
@@ -3367,7 +3320,7 @@ js_is_dataview (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_strict_equals (js_env_t *env, js_value_t *a, js_value_t *b, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_StrictEq(env->context, a->value, b->value);
 
@@ -3376,7 +3329,7 @@ js_strict_equals (js_env_t *env, js_value_t *a, js_value_t *b, bool *result) {
 
 int
 js_get_global (js_env_t *env, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -3391,7 +3344,7 @@ js_get_global (js_env_t *env, js_value_t **result) {
 
 int
 js_get_undefined (js_env_t *env, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -3406,7 +3359,7 @@ js_get_undefined (js_env_t *env, js_value_t **result) {
 
 int
 js_get_null (js_env_t *env, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -3421,7 +3374,7 @@ js_get_null (js_env_t *env, js_value_t **result) {
 
 int
 js_get_boolean (js_env_t *env, bool value, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -3436,7 +3389,7 @@ js_get_boolean (js_env_t *env, bool value, js_value_t **result) {
 
 int
 js_get_value_bool (js_env_t *env, js_value_t *value, bool *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   *result = JS_ToBool(env->context, value->value);
 
@@ -3445,7 +3398,7 @@ js_get_value_bool (js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_get_value_int32 (js_env_t *env, js_value_t *value, int32_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JS_ToInt32(env->context, result, value->value);
 
@@ -3454,7 +3407,7 @@ js_get_value_int32 (js_env_t *env, js_value_t *value, int32_t *result) {
 
 int
 js_get_value_uint32 (js_env_t *env, js_value_t *value, uint32_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JS_ToUint32(env->context, result, value->value);
 
@@ -3463,7 +3416,7 @@ js_get_value_uint32 (js_env_t *env, js_value_t *value, uint32_t *result) {
 
 int
 js_get_value_int64 (js_env_t *env, js_value_t *value, int64_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JS_ToInt64(env->context, result, value->value);
 
@@ -3472,7 +3425,7 @@ js_get_value_int64 (js_env_t *env, js_value_t *value, int64_t *result) {
 
 int
 js_get_value_double (js_env_t *env, js_value_t *value, double *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JS_ToFloat64(env->context, result, value->value);
 
@@ -3481,7 +3434,7 @@ js_get_value_double (js_env_t *env, js_value_t *value, double *result) {
 
 int
 js_get_value_bigint_int64 (js_env_t *env, js_value_t *value, int64_t *result, bool *lossless) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JS_ToBigInt64(env->context, result, value->value);
 
@@ -3492,7 +3445,7 @@ js_get_value_bigint_int64 (js_env_t *env, js_value_t *value, int64_t *result, bo
 
 int
 js_get_value_bigint_uint64 (js_env_t *env, js_value_t *value, uint64_t *result, bool *lossless) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JS_ToBigInt64(env->context, (int64_t *) result, value->value);
 
@@ -3503,7 +3456,7 @@ js_get_value_bigint_uint64 (js_env_t *env, js_value_t *value, uint64_t *result, 
 
 int
 js_get_value_string_utf8 (js_env_t *env, js_value_t *value, utf8_t *str, size_t len, size_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   size_t cstr_len;
   const char *cstr = JS_ToCStringLen(env->context, &cstr_len, value->value);
@@ -3527,7 +3480,7 @@ js_get_value_string_utf8 (js_env_t *env, js_value_t *value, utf8_t *str, size_t 
 
 int
 js_get_value_string_utf16le (js_env_t *env, js_value_t *value, utf16_t *str, size_t len, size_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   size_t cstr_len;
   const char *cstr = JS_ToCStringLen(env->context, &cstr_len, value->value);
@@ -3553,7 +3506,7 @@ js_get_value_string_utf16le (js_env_t *env, js_value_t *value, utf16_t *str, siz
 
 int
 js_get_value_external (js_env_t *env, js_value_t *value, void **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value->value, js_external_class_id);
 
@@ -3564,7 +3517,7 @@ js_get_value_external (js_env_t *env, js_value_t *value, void **result) {
 
 int
 js_get_value_date (js_env_t *env, js_value_t *value, double *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JS_ToDate(env->context, result, value->value);
 
@@ -3573,7 +3526,7 @@ js_get_value_date (js_env_t *env, js_value_t *value, double *result) {
 
 int
 js_get_array_length (js_env_t *env, js_value_t *value, uint32_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   JSValue length = JS_GetPropertyStr(env->context, value->value, "length");
 
@@ -3586,7 +3539,7 @@ js_get_array_length (js_env_t *env, js_value_t *value, uint32_t *result) {
 
 int
 js_get_prototype (js_env_t *env, js_value_t *object, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -4035,7 +3988,7 @@ js_delete_element (js_env_t *env, js_value_t *object, uint32_t index, bool *resu
 
 int
 js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *argc, js_value_t *argv[], js_value_t **receiver, void **data) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   if (argv) {
     size_t i = 0, n = info->argc < *argc ? info->argc : *argc;
@@ -4088,7 +4041,7 @@ js_get_callback_info (js_env_t *env, const js_callback_info_t *info, size_t *arg
 
 int
 js_get_new_target (js_env_t *env, const js_callback_info_t *info, js_value_t **result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -4103,7 +4056,7 @@ js_get_new_target (js_env_t *env, const js_callback_info_t *info, js_value_t **r
 
 int
 js_get_arraybuffer_info (js_env_t *env, js_value_t *arraybuffer, void **pdata, size_t *plen) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   size_t len;
 
@@ -4122,7 +4075,7 @@ js_get_arraybuffer_info (js_env_t *env, js_value_t *arraybuffer, void **pdata, s
 
 int
 js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_type_t *ptype, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   size_t offset, byte_len, bytes_per_element;
 
@@ -4195,7 +4148,7 @@ js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_typ
 
 int
 js_get_dataview_info (js_env_t *env, js_value_t *dataview, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   size_t offset;
 
@@ -4659,7 +4612,7 @@ js_fatal_exception (js_env_t *env, js_value_t *error) {
 
 int
 js_adjust_external_memory (js_env_t *env, int64_t change_in_bytes, int64_t *result) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
   env->external_memory += change_in_bytes;
 
@@ -4670,15 +4623,11 @@ js_adjust_external_memory (js_env_t *env, int64_t change_in_bytes, int64_t *resu
 
 int
 js_request_garbage_collection (js_env_t *env) {
-  if (JS_HasException(env->context)) return -1;
+  // Allow continuing even with a pending exception
 
-  if (!env->platform->options.expose_garbage_collection) {
-    js_throw_error(env, NULL, "Garbage collection is unavailable");
-
-    return -1;
+  if (env->platform->options.expose_garbage_collection) {
+    JS_RunGC(env->runtime);
   }
-
-  JS_RunGC(env->runtime);
 
   return 0;
 }
