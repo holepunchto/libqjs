@@ -1082,12 +1082,7 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
   if (module->meta) {
     JSValue meta = JS_GetImportMeta(env->context, module->definition);
 
-    module->meta(
-      env,
-      module,
-      &(js_value_t){meta},
-      module->meta_data
-    );
+    module->meta(env, module, &(js_value_t){meta}, module->meta_data);
 
     JS_FreeValue(env->context, meta);
 
