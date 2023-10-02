@@ -965,6 +965,9 @@ int
 js_delete_module (js_env_t *env, js_module_t *module) {
   // Allow continuing even with a pending exception
 
+  JS_FreeValue(env->context, module->source);
+  JS_FreeValue(env->context, module->bytecode);
+
   free(module->name);
   free(module);
 
@@ -1114,6 +1117,8 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
   } else {
     js_resolve_deferred(env, deferred, &(js_value_t){value});
   }
+
+  module->bytecode = JS_NULL;
 
   JS_FreeValue(env->context, value);
 
