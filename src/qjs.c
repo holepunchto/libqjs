@@ -4611,6 +4611,21 @@ js_fatal_exception (js_env_t *env, js_value_t *error) {
 }
 
 int
+js_terminate_execution (js_env_t *env) {
+  // Allow continuing even with a pending exception
+
+  JS_ThrowInternalError(env->context, "terminated");
+
+  JSValue error = JS_GetException(env->context);
+
+  JS_SetUncatchableError(env->context, error, true);
+
+  JS_Throw(env->context, error);
+
+  return 0;
+}
+
+int
 js_adjust_external_memory (js_env_t *env, int64_t change_in_bytes, int64_t *result) {
   // Allow continuing even with a pending exception
 
