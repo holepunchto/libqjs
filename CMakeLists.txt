@@ -10,10 +10,6 @@ if(NOT TARGET uv)
   add_subdirectory(vendor/libuv EXCLUDE_FROM_ALL)
 endif()
 
-if(NOT TARGET mem)
-  add_subdirectory(vendor/libmem EXCLUDE_FROM_ALL)
-endif()
-
 if(NOT TARGET utf)
   add_subdirectory(vendor/libutf EXCLUDE_FROM_ALL)
 endif()
@@ -44,11 +40,10 @@ target_include_directories(
     $<TARGET_PROPERTY:js,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:quickjs,INTERFACE_INCLUDE_DIRECTORIES>
   PRIVATE
-    $<TARGET_PROPERTY:mem,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:utf,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
-add_library(qjs_shared SHARED $<TARGET_OBJECTS:qjs>)
+add_library(qjs_shared SHARED)
 
 set_target_properties(
   qjs_shared
@@ -60,13 +55,13 @@ set_target_properties(
 target_link_libraries(
   qjs_shared
   PUBLIC
+    qjs
     uv
-    mem_shared
     utf_shared
     quickjs_shared
 )
 
-add_library(qjs_static STATIC $<TARGET_OBJECTS:qjs>)
+add_library(qjs_static STATIC)
 
 set_target_properties(
   qjs_static
@@ -78,8 +73,8 @@ set_target_properties(
 target_link_libraries(
   qjs_static
   PUBLIC
+    qjs
     uv_a
-    mem_static
     utf_static
     quickjs_static
 )

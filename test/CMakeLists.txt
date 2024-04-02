@@ -14,8 +14,12 @@ list(APPEND tests
   coerce-number-to-string
   coerce-object-to-string
   coerce-string-to-number
+  coerce-symbol-to-string
   create-arraybuffer
   create-arraybuffer-with-backing-store
+  create-date
+  create-date-nan
+  create-date-overflow
   create-delegate
   create-delegate-get-without-has
   create-delegate-get-throw
@@ -34,6 +38,7 @@ list(APPEND tests
   create-function-throw-indirect
   create-function-with-ffi
   create-function-with-ffi-arraybuffer
+  create-function-with-ffi-finalizer
   create-function-with-ffi-no-jit
   create-function-with-ffi-pointer
   create-function-with-ffi-receiver
@@ -83,6 +88,8 @@ list(APPEND tests
   get-value-string-utf8-no-null
   import-meta
   import-meta-throw
+  inspector
+  inspector-pause
   many-large-allocs
   many-small-allocs
   promise-rejection
@@ -99,6 +106,7 @@ list(APPEND tests
   set-named-property
   terminate-execution
   threads
+  threads-platform-loop
   throw-error
   throw-error-formatted
   typeof-bigint
@@ -113,6 +121,8 @@ list(APPEND tests
   typeof-undefined
   wasm
   wasm-async
+  wasm-async-io
+  wasm-async-io-multiple
   wrap
   wrap-with-finalizer
   wrap-with-reference
@@ -127,10 +137,15 @@ list(APPEND skipped_tests
   # Not supported
   create-function-with-ffi
   create-function-with-ffi-arraybuffer
+  create-function-with-ffi-finalizer
   create-function-with-ffi-pointer
   create-function-with-ffi-receiver
   create-function-with-ffi-string
   create-function-with-ffi-uint8array
+
+  # Not supported
+  inspector
+  inspector-pause
 
   # Not supported
   run-module-async
@@ -138,6 +153,8 @@ list(APPEND skipped_tests
   # Not supported
   wasm
   wasm-async
+  wasm-async-io
+  wasm-async-io-multiple
 )
 
 foreach(test IN LISTS tests)
@@ -147,12 +164,6 @@ foreach(test IN LISTS tests)
     ${test}
     PRIVATE
       qjs_shared
-  )
-
-  target_include_directories(
-    ${test}
-    PRIVATE
-      $<TARGET_PROPERTY:qjs,INTERFACE_INCLUDE_DIRECTORIES>
   )
 
   add_test(

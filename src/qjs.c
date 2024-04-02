@@ -1,7 +1,6 @@
 #include <assert.h>
 #include <js.h>
 #include <js/ffi.h>
-#include <mem.h>
 #include <quickjs.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -30,8 +29,6 @@ struct js_platform_s {
 };
 
 struct js_env_s {
-  mem_heap_t *heap;
-
   uv_loop_t *loop;
   uv_prepare_t prepare;
   uv_check_t check;
@@ -44,6 +41,7 @@ struct js_env_s {
 
   JSRuntime *runtime;
   JSContext *context;
+  JSValue bindings;
 
   int64_t external_memory;
 
@@ -476,6 +474,10 @@ static inline void
 on_run_microtasks (js_env_t *env) {
   int err;
 
+  js_handle_scope_t *scope;
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
+
   JSContext *context;
 
   for (;;) {
@@ -502,6 +504,9 @@ on_run_microtasks (js_env_t *env) {
 
     free(prev);
   }
+
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
 }
 
 static void
@@ -538,27 +543,27 @@ on_check (uv_check_t *handle) {
 
 static void *
 on_malloc (JSMallocState *s, size_t size) {
-  return mem_alloc((mem_heap_t *) s->opaque, size);
+  return malloc(size);
 }
 
 static void
 on_free (JSMallocState *s, void *ptr) {
-  mem_free(ptr);
+  free(ptr);
 }
 
 static void *
 on_realloc (JSMallocState *s, void *ptr, size_t size) {
-  return mem_realloc((mem_heap_t *) s->opaque, ptr, size);
+  return realloc(ptr, size);
 }
 
 static size_t
 on_usable_size (const void *ptr) {
-  return mem_usable_size(ptr);
+  return 0;
 }
 
 static void *
 on_shared_malloc (void *opaque, size_t size) {
-  js_arraybuffer_header_t *header = mem_alloc((mem_heap_t *) opaque, sizeof(js_arraybuffer_header_t) + size);
+  js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t) + size);
 
   header->references = 1;
   header->len = size;
@@ -571,7 +576,7 @@ on_shared_free (void *opaque, void *ptr) {
   js_arraybuffer_header_t *header = (js_arraybuffer_header_t *) ((char *) ptr - sizeof(js_arraybuffer_header_t));
 
   if (--header->references == 0) {
-    mem_free(header);
+    free(header);
   }
 }
 
@@ -586,10 +591,6 @@ int
 js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *options, js_env_t **result) {
   int err;
 
-  mem_heap_t *heap;
-  err = mem_heap_init(NULL, &heap);
-  assert(err == 0);
-
   JSRuntime *runtime = JS_NewRuntime2(
     &(JSMallocFunctions){
       .js_malloc = on_malloc,
@@ -597,7 +598,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
       .js_realloc = on_realloc,
       .js_malloc_usable_size = on_usable_size,
     },
-    (void *) heap
+    NULL
   );
 
   JS_SetSharedArrayBufferFunctions(
@@ -606,7 +607,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
       .sab_alloc = on_shared_malloc,
       .sab_free = on_shared_free,
       .sab_dup = on_shared_dup,
-      .sab_opaque = (void *) heap,
+      .sab_opaque = NULL,
     }
   );
 
@@ -639,8 +640,6 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
 
   js_env_t *env = malloc(sizeof(js_env_t));
 
-  env->heap = heap;
-
   env->loop = loop;
   env->active_handles = 2;
 
@@ -650,6 +649,7 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
 
   env->runtime = runtime;
   env->context = JS_NewContext(runtime);
+  env->bindings = JS_NewObject(env->context);
 
   env->external_memory = 0;
 
@@ -691,9 +691,6 @@ js_create_env (uv_loop_t *loop, js_platform_t *platform, const js_env_options_t 
   // to be queued.
   uv_unref((uv_handle_t *) &env->check);
 
-  err = js_open_handle_scope(env, &env->scope);
-  assert(err == 0);
-
   *result = env;
 
   return 0;
@@ -712,19 +709,14 @@ int
 js_destroy_env (js_env_t *env) {
   int err;
 
-  err = js_close_handle_scope(env, env->scope);
-  assert(err == 0);
-
+  JS_FreeValue(env->context, env->bindings);
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
 
   uv_ref((uv_handle_t *) &env->check);
 
   uv_close((uv_handle_t *) &env->prepare, on_handle_close);
-
   uv_close((uv_handle_t *) &env->check, on_handle_close);
-
-  mem_heap_destroy(env->heap);
 
   return 0;
 }
@@ -818,6 +810,8 @@ js_close_escapable_handle_scope (js_env_t *env, js_escapable_handle_scope_t *sco
 
 static inline void
 js_attach_to_handle_scope (js_env_t *env, js_handle_scope_t *scope, js_value_t *value) {
+  assert(scope);
+
   if (scope->len >= scope->capacity) {
     if (scope->capacity) scope->capacity *= 2;
     else scope->capacity = 4;
@@ -839,6 +833,21 @@ js_escape_handle (js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t 
   *result = wrapper;
 
   js_attach_to_handle_scope(env, scope->parent, wrapper);
+
+  return 0;
+}
+
+int
+js_get_bindings (js_env_t *env, js_value_t **result) {
+  if (JS_HasException(env->context)) return -1;
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = JS_DupValue(env->context, env->bindings);
+
+  *result = wrapper;
+
+  js_attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -913,6 +922,8 @@ js_create_module (js_env_t *env, const char *name, size_t len, int offset, js_va
 
 static int
 on_evaluate_module (JSContext *context, JSModuleDef *definition) {
+  int err;
+
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
   js_module_evaluator_t *evaluator = env->evaluators;
@@ -921,7 +932,14 @@ on_evaluate_module (JSContext *context, JSModuleDef *definition) {
     evaluator = evaluator->next;
   }
 
+  js_handle_scope_t *scope;
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
+
   evaluator->cb(env, evaluator->module, evaluator->data);
+
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
 
   return 0;
 }
@@ -1065,8 +1083,6 @@ js_instantiate_module (js_env_t *env, js_module_t *module, js_module_resolve_cb 
   module->bytecode = bytecode;
 
   module->definition = (JSModuleDef *) JS_VALUE_GET_PTR(bytecode);
-
-  JS_FreeCString(env->context, str);
 
   env->resolvers = resolver.next;
 
@@ -2522,7 +2538,7 @@ int
 js_get_promise_state (js_env_t *env, js_value_t *promise, js_promise_state_t *result) {
   // Allow continuing even with a pending exception
 
-  switch (JS_GetPromiseState(env->context, promise->value)) {
+  switch (JS_PromiseState(env->context, promise->value)) {
   case JS_PROMISE_PENDING:
     *result = js_promise_pending;
     break;
@@ -2541,11 +2557,11 @@ int
 js_get_promise_result (js_env_t *env, js_value_t *promise, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  assert(JS_GetPromiseState(env->context, promise->value) != JS_PROMISE_PENDING);
+  assert(JS_PromiseState(env->context, promise->value) != JS_PROMISE_PENDING);
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  wrapper->value = JS_GetPromiseResult(env->context, promise->value);
+  wrapper->value = JS_PromiseResult(env->context, promise->value);
 
   *result = wrapper;
 
@@ -2556,14 +2572,16 @@ js_get_promise_result (js_env_t *env, js_value_t *promise, js_value_t **result) 
 
 static void
 on_arraybuffer_finalize (JSRuntime *runtime, void *opaque, void *ptr) {
-  mem_free(ptr);
+  free(ptr);
 }
 
 int
 js_create_arraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
   if (JS_HasException(env->context)) return -1;
 
-  uint8_t *bytes = mem_zalloc(env->heap, len);
+  uint8_t *bytes = malloc(len);
+
+  memset(bytes, 0, len);
 
   if (data) {
     *data = bytes;
@@ -2622,14 +2640,14 @@ js_create_arraybuffer_with_backing_store (js_env_t *env, js_arraybuffer_backing_
 
 static void
 on_unsafe_arraybuffer_finalize (JSRuntime *runtime, void *opaque, void *ptr) {
-  mem_free(ptr);
+  free(ptr);
 }
 
 int
 js_create_unsafe_arraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
   if (JS_HasException(env->context)) return -1;
 
-  uint8_t *bytes = mem_alloc(env->heap, len);
+  uint8_t *bytes = malloc(len);
 
   if (data) {
     *data = bytes;
@@ -2714,7 +2732,9 @@ int
 js_create_sharedarraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
   if (JS_HasException(env->context)) return -1;
 
-  js_arraybuffer_header_t *header = mem_zalloc(env->heap, sizeof(js_arraybuffer_header_t) + len);
+  js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t) + len);
+
+  memset(header->data, 0, len);
 
   header->references = 0;
   header->len = len;
@@ -2765,7 +2785,7 @@ int
 js_create_unsafe_sharedarraybuffer (js_env_t *env, size_t len, void **data, js_value_t **result) {
   if (JS_HasException(env->context)) return -1;
 
-  js_arraybuffer_header_t *header = mem_alloc(env->heap, sizeof(js_arraybuffer_header_t) + len);
+  js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t) + len);
 
   header->references = 0;
   header->len = len;
@@ -3133,6 +3153,33 @@ js_is_function (js_env_t *env, js_value_t *value, bool *result) {
 }
 
 int
+js_is_async_function (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = false;
+
+  return 0;
+}
+
+int
+js_is_generator_function (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = false;
+
+  return 0;
+}
+
+int
+js_is_generator_object (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = false;
+
+  return 0;
+}
+
+int
 js_is_array (js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
@@ -3197,6 +3244,21 @@ js_is_date (js_env_t *env, js_value_t *value, bool *result) {
 }
 
 int
+js_is_regexp (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "RegExp");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
 js_is_error (js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
@@ -3211,6 +3273,114 @@ js_is_promise (js_env_t *env, js_value_t *value, bool *result) {
 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Promise");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_proxy (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Proxy");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_map (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Map");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_map_iterator (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = false;
+
+  return 0;
+}
+
+int
+js_is_set (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Set");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_set_iterator (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = false;
+
+  return 0;
+}
+
+int
+js_is_weak_map (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakMap");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_weak_set (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakSet");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_weak_ref (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakRef");
 
   *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
@@ -3315,6 +3485,15 @@ js_is_dataview (js_env_t *env, js_value_t *value, bool *result) {
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_module_namespace (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = false;
 
   return 0;
 }
@@ -4075,6 +4254,25 @@ js_get_arraybuffer_info (js_env_t *env, js_value_t *arraybuffer, void **pdata, s
 }
 
 int
+js_get_sharedarraybuffer_info (js_env_t *env, js_value_t *sharedarraybuffer, void **pdata, size_t *plen) {
+  // Allow continuing even with a pending exception
+
+  size_t len;
+
+  uint8_t *data = JS_GetArrayBuffer(env->context, &len, sharedarraybuffer->value);
+
+  if (pdata) {
+    *pdata = data;
+  }
+
+  if (plen) {
+    *plen = len;
+  }
+
+  return 0;
+}
+
+int
 js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_type_t *ptype, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
   // Allow continuing even with a pending exception
 
@@ -4646,6 +4844,36 @@ js_request_garbage_collection (js_env_t *env) {
   }
 
   return 0;
+}
+
+int
+js_create_inspector (js_env_t *env, js_inspector_t **result) {
+  return -1;
+}
+
+int
+js_destroy_inspector (js_env_t *env, js_inspector_t *inspector) {
+  return -1;
+}
+
+int
+js_on_inspector_response (js_env_t *env, js_inspector_t *inspector, js_inspector_message_cb cb, void *data) {
+  return 0;
+}
+
+int
+js_on_inspector_paused (js_env_t *env, js_inspector_t *inspector, js_inspector_paused_cb cb, void *data) {
+  return 0;
+}
+
+int
+js_connect_inspector (js_env_t *env, js_inspector_t *inspector) {
+  return -1;
+}
+
+int
+js_send_inspector_request (js_env_t *env, js_inspector_t *inspector, js_value_t *message) {
+  return -1;
 }
 
 int
