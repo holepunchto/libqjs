@@ -83,5 +83,6 @@ install(TARGETS qjs_shared qjs_static)
 
 if(PROJECT_IS_TOP_LEVEL)
   enable_testing()
+
   add_subdirectory(test)
 endif()

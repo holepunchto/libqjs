@@ -4848,11 +4848,15 @@ js_request_garbage_collection (js_env_t *env) {
 
 int
 js_create_inspector (js_env_t *env, js_inspector_t **result) {
+  js_throw_error(env, NULL, "Unsupported operation");
+
   return -1;
 }
 
 int
 js_destroy_inspector (js_env_t *env, js_inspector_t *inspector) {
+  js_throw_error(env, NULL, "Unsupported operation");
+
   return -1;
 }
 
@@ -4868,11 +4872,15 @@ js_on_inspector_paused (js_env_t *env, js_inspector_t *inspector, js_inspector_p
 
 int
 js_connect_inspector (js_env_t *env, js_inspector_t *inspector) {
+  js_throw_error(env, NULL, "Unsupported operation");
+
   return -1;
 }
 
 int
 js_send_inspector_request (js_env_t *env, js_inspector_t *inspector, js_value_t *message) {
+  js_throw_error(env, NULL, "Unsupported operation");
+
   return -1;
 }
 
