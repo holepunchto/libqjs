@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <js.h>
 #include <js/ffi.h>
+#include <math.h>
 #include <quickjs.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -2850,39 +2851,23 @@ js_create_typedarray (js_env_t *env, js_typedarray_type_t type, size_t len, js_v
   JSValue constructor;
 
   switch (type) {
-  case js_int8_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Int8Array");
+#define V(class, type) \
+  case type: \
+    constructor = JS_GetPropertyStr(env->context, global, class); \
     break;
-  case js_uint8_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Uint8Array");
-    break;
-  case js_uint8_clamped_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Uint8ClampedArray");
-    break;
-  case js_int16_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Int16Array");
-    break;
-  case js_uint16_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Uint16Array");
-    break;
-  case js_int32_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Int32Array");
-    break;
-  case js_uint32_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Uint32Array");
-    break;
-  case js_float32_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Float32Array");
-    break;
-  case js_float64_array:
-    constructor = JS_GetPropertyStr(env->context, global, "Float64Array");
-    break;
-  case js_bigint64_array:
-    constructor = JS_GetPropertyStr(env->context, global, "BigInt64Array");
-    break;
-  case js_biguint64_array:
-    constructor = JS_GetPropertyStr(env->context, global, "BigUint64Array");
-    break;
+
+    V("Int8Array", js_int8array);
+    V("Uint8Array", js_uint8array);
+    V("Uint8ClampedArray", js_uint8clampedarray);
+    V("Int16Array", js_int16_array);
+    V("Uint16Array", js_uint16array);
+    V("Int32Array", js_int32array);
+    V("Uint32Array", js_uint32array);
+    V("Float32Array", js_float32array);
+    V("Float64Array", js_float64array);
+    V("BigInt64Array", js_bigint64array);
+    V("BigUint64Array", js_biguint64array);
+#undef V
   }
 
   JSValue argv[3] = {arraybuffer->value, JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
@@ -3117,6 +3102,44 @@ js_is_number (js_env_t *env, js_value_t *value, bool *result) {
 }
 
 int
+js_is_int32 (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  if (JS_IsNumber(value->value)) {
+    double number;
+
+    JS_ToFloat64(env->context, &number, value->value);
+
+    double integral;
+
+    *result = modf(number, &integral) == 0.0 && integral >= INT32_MIN && integral <= INT32_MAX;
+  } else {
+    *result = false;
+  }
+
+  return 0;
+}
+
+int
+js_is_uint32 (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  if (JS_IsNumber(value->value)) {
+    double number;
+
+    JS_ToFloat64(env->context, &number, value->value);
+
+    double integral;
+
+    *result = modf(number, &integral) == 0.0 && integral >= 0.0 && integral <= UINT32_MAX;
+  } else {
+    *result = false;
+  }
+
+  return 0;
+}
+
+int
 js_is_string (js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
@@ -3171,7 +3194,16 @@ js_is_generator_function (js_env_t *env, js_value_t *value, bool *result) {
 }
 
 int
-js_is_generator_object (js_env_t *env, js_value_t *value, bool *result) {
+js_is_generator (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = false;
+
+  return 0;
+}
+
+int
+js_is_arguments (js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
   *result = false;
@@ -3469,6 +3501,171 @@ js_is_typedarray (js_env_t *env, js_value_t *value, bool *result) {
   *result = false;
 
 done:
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_int8array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Int8Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_uint8array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint8Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_uint8clampedarray (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint8ClampedArray");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_int16array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Int16Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_uint16array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint16Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_int32array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Int32Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_uint32array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint32Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_float32array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Float32Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_float64array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Float64Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_bigint64array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "BigInt64Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_biguint64array (js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "BigUint64Array");
+
+  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+  JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
 
   return 0;
@@ -4298,18 +4495,17 @@ js_get_typedarray_info (js_env_t *env, js_value_t *typedarray, js_typedarray_typ
     JS_FreeValue(env->context, constructor); \
   }
 
-    V("Int8Array", js_int8_array);
-    V("Uint8Array", js_uint8_array);
-    V("Uint8ClampedArray", js_uint8_clamped_array);
+    V("Int8Array", js_int8array);
+    V("Uint8Array", js_uint8array);
+    V("Uint8ClampedArray", js_uint8clampedarray);
     V("Int16Array", js_int16_array);
-    V("Uint16Array", js_uint16_array);
-    V("Int32Array", js_int32_array);
-    V("Uint32Array", js_uint32_array);
-    V("Float32Array", js_float32_array);
-    V("Float64Array", js_float64_array);
-    V("BigInt64Array", js_bigint64_array);
-    V("BigUint64Array", js_biguint64_array);
-
+    V("Uint16Array", js_uint16array);
+    V("Int32Array", js_int32array);
+    V("Uint32Array", js_uint32array);
+    V("Float32Array", js_float32array);
+    V("Float64Array", js_float64array);
+    V("BigInt64Array", js_bigint64array);
+    V("BigUint64Array", js_biguint64array);
 #undef V
 
   done:
