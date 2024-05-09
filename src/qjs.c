@@ -3699,7 +3699,7 @@ int
 js_get_value_date (js_env_t *env, js_value_t *value, double *result) {
   // Allow continuing even with a pending exception
 
-  JS_ToDate(env->context, result, value->value);
+  JS_ToFloat64(env->context, result, value->value);
 
   return 0;
 }
