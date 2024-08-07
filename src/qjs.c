@@ -441,23 +441,22 @@ js__on_unhandled_rejection (JSContext *context, JSValue promise, JSValue reason)
 
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  if (env->callbacks.unhandled_rejection == NULL) goto done;
+  if (env->callbacks.unhandled_rejection) {
+    js_handle_scope_t *scope;
+    err = js_open_handle_scope(env, &scope);
+    assert(err == 0);
 
-  js_handle_scope_t *scope;
-  err = js_open_handle_scope(env, &scope);
-  assert(err == 0);
+    env->callbacks.unhandled_rejection(
+      env,
+      &(js_value_t){reason},
+      &(js_value_t){promise},
+      env->callbacks.unhandled_rejection_data
+    );
 
-  env->callbacks.unhandled_rejection(
-    env,
-    &(js_value_t){reason},
-    &(js_value_t){promise},
-    env->callbacks.unhandled_rejection_data
-  );
+    err = js_close_handle_scope(env, scope);
+    assert(err == 0);
+  }
 
-  err = js_close_handle_scope(env, scope);
-  assert(err == 0);
-
-done:
   JS_FreeValue(context, promise);
   JS_FreeValue(context, reason);
 }
@@ -509,13 +508,14 @@ js__on_run_microtasks (js_env_t *env) {
 
   for (;;) {
     err = JS_ExecutePendingJob(env->runtime, &context);
-    if (err <= 0) break;
 
-    JSValue error = JS_GetException(context);
+    if (err == 0) break;
 
-    if (JS_IsUninitialized(error)) continue;
+    if (err < 0) {
+      JSValue error = JS_GetException(context);
 
-    js__on_uncaught_exception(context, error);
+      js__on_uncaught_exception(context, error);
+    }
   }
 
   js_promise_rejection_t *next = env->promise_rejections;
@@ -1122,10 +1122,6 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
 
   int err;
 
-  js_deferred_t *deferred;
-  err = js_create_promise(env, &deferred, result);
-  if (err < 0) return err;
-
   if (module->meta) {
     JSValue meta = JS_GetImportMeta(env->context, module->definition);
 
@@ -1135,6 +1131,10 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
 
     if (JS_HasException(env->context)) {
       JSValue error = JS_GetException(env->context);
+
+      js_deferred_t *deferred;
+      err = js_create_promise(env, &deferred, result);
+      if (err < 0) return err;
 
       js_reject_deferred(env, deferred, &(js_value_t){error});
 
@@ -1152,19 +1152,29 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
 
   env->depth--;
 
+  module->bytecode = JS_NULL;
+
   if (JS_IsException(value)) {
     JSValue error = JS_GetException(env->context);
+
+    js_deferred_t *deferred;
+    err = js_create_promise(env, &deferred, result);
+    if (err < 0) return err;
 
     js_reject_deferred(env, deferred, &(js_value_t){error});
 
     JS_FreeValue(env->context, error);
-  } else {
-    js_resolve_deferred(env, deferred, &(js_value_t){value});
+
+    return 0;
   }
 
-  module->bytecode = JS_NULL;
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  JS_FreeValue(env->context, value);
+  wrapper->value = value;
+
+  *result = wrapper;
+
+  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }

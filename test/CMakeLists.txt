@@ -153,9 +153,6 @@ list(APPEND skipped_tests
   inspector-pause
 
   # Not supported
-  run-module-async
-
-  # Not supported
   wasm
   wasm-async
   wasm-async-io
