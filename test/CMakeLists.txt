@@ -10,6 +10,8 @@ list(APPEND tests
   call-function-microtask
   call-function-microtask-nested
   call-function-throw
+  call-threadsafe-function-after-release
+  call-threadsafe-function-with-data
   coerce-number-to-string
   coerce-object-to-string
   coerce-string-to-number
@@ -64,6 +66,10 @@ list(APPEND tests
   create-sharedarraybuffer-with-backing-store
   create-string-utf8
   create-string-utf8-with-null
+  create-threadsafe-function
+  create-threadsafe-function-with-callback
+  create-threadsafe-function-with-context
+  create-threadsafe-function-with-finalizer
   create-uint8array
   create-unsafe-arraybuffer
   define-class
@@ -154,6 +160,14 @@ list(APPEND skipped_tests
   wasm-async
   wasm-async-io
   wasm-async-io-multiple
+
+  # Not implemented
+  call-threadsafe-function-after-release
+  call-threadsafe-function-with-data
+  create-threadsafe-function
+  create-threadsafe-function-with-callback
+  create-threadsafe-function-with-context
+  create-threadsafe-function-with-finalizer
 )
 
 foreach(test IN LISTS tests)
