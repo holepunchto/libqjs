@@ -513,7 +513,7 @@ js__on_run_microtasks (js_env_t *env) {
 
     JSValue error = JS_GetException(context);
 
-    if (JS_IsNull(error)) continue;
+    if (JS_IsUninitialized(error)) continue;
 
     js__on_uncaught_exception(context, error);
   }
@@ -1133,9 +1133,9 @@ js_run_module (js_env_t *env, js_module_t *module, js_value_t **result) {
 
     JS_FreeValue(env->context, meta);
 
-    JSValue error = JS_GetException(env->context);
+    if (JS_HasException(env->context)) {
+      JSValue error = JS_GetException(env->context);
 
-    if (!JS_IsNull(error)) {
       js_reject_deferred(env, deferred, &(js_value_t){error});
 
       JS_FreeValue(env->context, error);
@@ -1368,12 +1368,10 @@ js__on_constructor_call (JSContext *context, JSValueConst new_target, int argc, 
   if (result == NULL) value = JS_UNDEFINED;
   else value = JS_DupValue(env->context, result->value);
 
-  error = JS_GetException(env->context);
-
-  if (!JS_IsNull(error)) {
+  if (JS_HasException(env->context)) {
     JS_FreeValue(env->context, value);
 
-    value = JS_Throw(env->context, error);
+    value = JS_EXCEPTION;
   }
 
   err = js_close_handle_scope(env, scope);
@@ -1635,15 +1633,9 @@ js__on_delegate_get_own_property (JSContext *context, JSPropertyDescriptor *desc
 
     JS_FreeValue(env->context, property);
 
-    JSValue error = JS_GetException(env->context);
+    if (JS_HasException(env->context)) return -1;
 
-    if (JS_IsNull(error)) {
-      if (!exists) return 0;
-    } else {
-      JS_Throw(env->context, error);
-
-      return -1;
-    }
+    if (!exists) return 0;
   }
 
   if (delegate->callbacks.get) {
@@ -1653,24 +1645,18 @@ js__on_delegate_get_own_property (JSContext *context, JSPropertyDescriptor *desc
 
     JS_FreeValue(env->context, property);
 
-    JSValue error = JS_GetException(env->context);
+    if (JS_HasException(env->context)) return -1;
 
-    if (JS_IsNull(error)) {
-      if (result == NULL) return 0;
+    if (result == NULL) return 0;
 
-      if (descriptor) {
-        descriptor->flags = JS_PROP_ENUMERABLE;
-        descriptor->value = result->value;
-        descriptor->getter = JS_UNDEFINED;
-        descriptor->setter = JS_UNDEFINED;
-      }
-
-      return 1;
-    } else {
-      JS_Throw(env->context, error);
-
-      return -1;
+    if (descriptor) {
+      descriptor->flags = JS_PROP_ENUMERABLE;
+      descriptor->value = result->value;
+      descriptor->getter = JS_UNDEFINED;
+      descriptor->setter = JS_UNDEFINED;
     }
+
+    return 1;
   }
 
   return 0;
@@ -1678,6 +1664,8 @@ js__on_delegate_get_own_property (JSContext *context, JSPropertyDescriptor *desc
 
 static int
 js__on_delegate_get_own_property_names (JSContext *context, JSPropertyEnum **pproperties, uint32_t *plen, JSValueConst object) {
+  int err;
+
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
   js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js_delegate_class_id);
@@ -1685,34 +1673,26 @@ js__on_delegate_get_own_property_names (JSContext *context, JSPropertyEnum **ppr
   if (delegate->callbacks.own_keys) {
     js_value_t *result = delegate->callbacks.own_keys(env, delegate->data);
 
-    JSValue error = JS_GetException(env->context);
+    if (JS_HasException(env->context)) return -1;
 
-    if (JS_IsNull(error)) {
-      int err;
+    uint32_t len;
+    err = js_get_array_length(env, result, &len);
+    assert(err == 0);
 
-      uint32_t len;
-      err = js_get_array_length(env, result, &len);
+    JSPropertyEnum *properties = js_mallocz(env->context, sizeof(JSPropertyEnum) * len);
+
+    for (uint32_t i = 0; i < len; i++) {
+      js_value_t *value;
+      err = js_get_element(env, result, i, &value);
       assert(err == 0);
 
-      JSPropertyEnum *properties = js_mallocz(env->context, sizeof(JSPropertyEnum) * len);
-
-      for (uint32_t i = 0; i < len; i++) {
-        js_value_t *value;
-        err = js_get_element(env, result, i, &value);
-        assert(err == 0);
-
-        properties[i].atom = JS_ValueToAtom(env->context, value->value);
-      }
-
-      *pproperties = properties;
-      *plen = len;
-
-      return 0;
-    } else {
-      JS_Throw(env->context, error);
-
-      return -1;
+      properties[i].atom = JS_ValueToAtom(env->context, value->value);
     }
+
+    *pproperties = properties;
+    *plen = len;
+
+    return 0;
   }
 
   *pproperties = NULL;
@@ -1734,14 +1714,9 @@ js__on_delegate_delete_property (JSContext *context, JSValueConst object, JSAtom
 
     JS_FreeValue(env->context, property);
 
-    JSValue error = JS_GetException(env->context);
+    if (JS_HasException(env->context)) return -1;
 
-    if (JS_IsNull(error)) return success;
-    else {
-      JS_Throw(env->context, error);
-
-      return -1;
-    }
+    return success;
   }
 
   return 0;
@@ -1760,14 +1735,9 @@ js__on_delegate_set_property (JSContext *context, JSValueConst object, JSAtom na
 
     JS_FreeValue(env->context, property);
 
-    JSValue error = JS_GetException(env->context);
+    if (JS_HasException(env->context)) return -1;
 
-    if (JS_IsNull(error)) return success;
-    else {
-      JS_Throw(env->context, error);
-
-      return -1;
-    }
+    return success;
   }
 
   return 0;
@@ -2140,15 +2110,14 @@ js__on_function_call (JSContext *context, JSValueConst receiver, int argc, JSVal
 
   js_value_t *result = callback->cb(env, &callback_info);
 
-  JSValue value, error = JS_GetException(env->context);
+  JSValue value;
 
-  if (JS_IsNull(error)) {
+  if (JS_HasException(env->context)) {
+    if (result) JS_FreeValue(env->context, result->value);
+    value = JS_EXCEPTION;
+  } else {
     if (result) value = JS_DupValue(env->context, result->value);
     else value = JS_UNDEFINED;
-  } else {
-    if (result) JS_FreeValue(env->context, result->value);
-
-    value = JS_Throw(env->context, error);
   }
 
   err = js_close_handle_scope(env, scope);
@@ -5050,7 +5019,7 @@ js_get_and_clear_last_exception (js_env_t *env, js_value_t **result) {
 
   JSValue error = JS_GetException(env->context);
 
-  if (JS_IsNull(error)) return js_get_undefined(env, result);
+  if (JS_IsUninitialized(error)) return js_get_undefined(env, result);
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
