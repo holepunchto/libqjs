@@ -1,0 +1,17 @@
+{
+  "private": true,
+  "name": "libqjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/holepunchto/libqjs.git"
+  },
+  "author": "Holepunch",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/holepunchto/libqjs/issues"
+  },
+  "homepage": "https://github.com/holepunchto/libqjs#readme",
+  "devDependencies": {
+    "cmake-fetch": "^1.0.0"
+  }
+}

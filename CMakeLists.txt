@@ -1,22 +1,14 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.25)
+
+find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 
 project(qjs C)
 
-if(NOT TARGET quickjs)
-  add_subdirectory(vendor/quickjs EXCLUDE_FROM_ALL)
-endif()
+add_library(v8 INTERFACE)
+add_library(c++ INTERFACE)
 
-if(NOT TARGET uv)
-  add_subdirectory(vendor/libuv EXCLUDE_FROM_ALL)
-endif()
-
-if(NOT TARGET utf)
-  add_subdirectory(vendor/libutf EXCLUDE_FROM_ALL)
-endif()
-
-if(NOT TARGET js)
-  add_subdirectory(vendor/libjs EXCLUDE_FROM_ALL)
-endif()
+fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
+fetch_package("github:holepunchto/quickjs#master")
 
 add_library(qjs OBJECT)
 

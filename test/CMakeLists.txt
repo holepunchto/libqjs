@@ -1,5 +1,10 @@
 list(APPEND tests
   add-finalizer
+  add-teardown-callback
+  add-teardown-callback-deferred
+  add-teardown-callback-deferred-remove
+  add-teardown-callback-multiple
+  add-teardown-callback-remove
   add-type-tag
   add-type-tag-delegate
   adjust-external-memory
@@ -7,6 +12,7 @@ list(APPEND tests
   atomics-wait-timeout-notify
   call-function
   call-function-ignore-return
+  call-function-in-context
   call-function-microtask
   call-function-microtask-nested
   call-function-throw
@@ -22,16 +28,16 @@ list(APPEND tests
   create-date-nan
   create-date-overflow
   create-delegate
-  create-delegate-get-without-has
-  create-delegate-get-throw
-  create-delegate-has-throw
-  create-delegate-set-throw
   create-delegate-delete-throw
+  create-delegate-get-throw
+  create-delegate-get-without-has
+  create-delegate-has-throw
   create-delegate-keys-throw
+  create-delegate-set-throw
   create-external
-  create-external-with-finalizer
   create-external-arraybuffer
   create-external-arraybuffer-with-finalizer
+  create-external-with-finalizer
   create-function
   create-function-args-extra
   create-function-args-fewer
@@ -73,10 +79,11 @@ list(APPEND tests
   create-uint8array
   create-unsafe-arraybuffer
   define-class
-  define-class-with-value
-  define-class-with-static-value
   define-class-with-method
   define-class-with-static-method
+  define-class-with-static-value
+  define-class-with-symbol-property
+  define-class-with-value
   dynamic-import
   dynamic-import-without-handler
   fatal-exception
@@ -85,9 +92,9 @@ list(APPEND tests
   get-platform-identifier
   get-platform-version
   get-property-missing
+  get-typedarray-info-uint16array
   get-typedarray-info-uint8array
   get-typedarray-info-uint8array-with-offset
-  get-typedarray-info-uint16array
   get-value-string-utf8
   get-value-string-utf8-length
   get-value-string-utf8-no-null
@@ -102,11 +109,13 @@ list(APPEND tests
   run-module
   run-module-async
   run-module-cyclic-import
-  run-module-nested-import
   run-module-double-nested-import
+  run-module-in-context
+  run-module-nested-import
   run-module-throw
   run-script
   run-script-ignore-return
+  run-script-in-context
   run-script-throw
   set-named-property
   terminate-execution
@@ -129,9 +138,9 @@ list(APPEND tests
   wasm-async-io
   wasm-async-io-multiple
   wrap
+  wrap-remove-with-finalizer
   wrap-with-finalizer
   wrap-with-reference
-  wrap-remove-with-finalizer
 )
 
 list(APPEND skipped_tests
@@ -165,10 +174,22 @@ list(APPEND skipped_tests
   create-threadsafe-function-with-callback
   create-threadsafe-function-with-context
   create-threadsafe-function-with-finalizer
+  
+  # Not implemented
+  add-teardown-callback
+  add-teardown-callback-deferred
+  add-teardown-callback-deferred-remove
+  add-teardown-callback-multiple
+  add-teardown-callback-remove
+
+  # Not implemented
+  call-function-in-context
+  run-module-in-context
+  run-script-in-context
 )
 
 foreach(test IN LISTS tests)
-  add_executable(${test} ../vendor/libjs/test/${test}.c)
+  add_executable(${test} ${js}/test/${test}.c)
 
   target_link_libraries(
     ${test}
