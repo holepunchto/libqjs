@@ -2706,14 +2706,11 @@ js_create_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t **resul
 
   int err;
 
+  if (len > UINT32_MAX) goto err;
+
   uint8_t *bytes = malloc(len);
 
-  if (bytes == NULL) {
-    err = js_throw_range_error(env, NULL, "Array buffer allocation failed");
-    assert(err == 0);
-
-    return js__error(env);
-  }
+  if (bytes == NULL) goto err;
 
   memset(bytes, 0, len);
 
@@ -2732,6 +2729,12 @@ js_create_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t **resul
   js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
+
+err:
+  err = js_throw_range_error(env, NULL, "Array buffer allocation failed");
+  assert(err == 0);
+
+  return js__error(env);
 }
 
 static void
@@ -2783,14 +2786,11 @@ js_create_unsafe_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t 
 
   int err;
 
+  if (len > UINT32_MAX) goto err;
+
   uint8_t *bytes = malloc(len);
 
-  if (bytes == NULL) {
-    err = js_throw_range_error(env, NULL, "Array buffer allocation failed");
-    assert(err == 0);
-
-    return js__error(env);
-  }
+  if (bytes == NULL) goto err;
 
   if (data) {
     *data = bytes;
@@ -2807,6 +2807,12 @@ js_create_unsafe_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t 
   js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
+
+err:
+  err = js_throw_range_error(env, NULL, "Array buffer allocation failed");
+  assert(err == 0);
+
+  return js__error(env);
 }
 
 static void
