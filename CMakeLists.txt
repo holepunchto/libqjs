@@ -26,7 +26,7 @@ target_sources(
 
 target_include_directories(
   js
-  PUBLIC
+  INTERFACE
     include
   PUBLIC
     ${js}/include
