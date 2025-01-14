@@ -221,7 +221,7 @@ foreach(test IN LISTS tests)
   target_link_libraries(
     ${test}
     PRIVATE
-      qjs_shared
+      js_shared
   )
 
   add_test(

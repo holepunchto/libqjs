@@ -1309,12 +1309,13 @@ int
 js_delete_reference(js_env_t *env, js_ref_t *reference) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
-    if (reference->count == 0) js__clear_weak_reference(env, reference);
+  if (reference->count == 0) {
+    if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
+      js__clear_weak_reference(env, reference);
+    }
   }
 
   JS_FreeValue(env->context, reference->value);
-
   JS_FreeValue(env->context, reference->symbol);
 
   free(reference);
@@ -1328,8 +1329,10 @@ js_reference_ref(js_env_t *env, js_ref_t *reference, uint32_t *result) {
 
   reference->count++;
 
-  if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
-    if (reference->count == 1) js__clear_weak_reference(env, reference);
+  if (reference->count == 1) {
+    if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
+      js__clear_weak_reference(env, reference);
+    }
   }
 
   if (result) *result = reference->count;
@@ -1344,7 +1347,7 @@ js_reference_unref(js_env_t *env, js_ref_t *reference, uint32_t *result) {
   if (reference->count > 0) {
     reference->count--;
 
-    if (reference->count == 1) {
+    if (reference->count == 0) {
       if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
         js__set_weak_reference(env, reference);
       }
@@ -2983,11 +2986,6 @@ js_release_arraybuffer_backing_store(js_env_t *env, js_arraybuffer_backing_store
     free(backing_store);
   }
 
-  return 0;
-}
-
-int
-js_set_arraybuffer_zero_fill_enabled(bool enabled) {
   return 0;
 }
 
@@ -4977,6 +4975,7 @@ int
 js_finish_deferred_teardown_callback(js_deferred_teardown_t *handle) {
   return -1;
 }
+
 int
 js_throw(js_env_t *env, js_value_t *error) {
   if (JS_HasException(env->context)) return js__error(env);
