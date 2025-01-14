@@ -9,7 +9,7 @@ add_library(c++ INTERFACE)
 add_library(js OBJECT)
 
 fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
-fetch_package("github:holepunchto/quickjs#master")
+fetch_package("github:holepunchto/quickjs-ng#master")
 
 set_target_properties(
   js
@@ -31,7 +31,7 @@ target_include_directories(
   PUBLIC
     ${js}/include
   PRIVATE
-    $<TARGET_PROPERTY:quickjs,INTERFACE_INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:qjs,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:uv,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:utf,INTERFACE_INCLUDE_DIRECTORIES>
 )
@@ -48,9 +48,9 @@ set_target_properties(
 target_link_libraries(
   js_shared
   PUBLIC
+    qjs
     uv
     utf_shared
-    quickjs_shared
   PRIVATE
     js
 )
@@ -67,9 +67,9 @@ set_target_properties(
 target_link_libraries(
   js_static
   PUBLIC
+    qjs
     uv_a
     utf_static
-    quickjs_static
   PRIVATE
     js
 )
