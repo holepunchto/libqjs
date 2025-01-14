@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.25)
 
 find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 project(js C)
 
 add_library(v8 INTERFACE)
