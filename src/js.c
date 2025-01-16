@@ -211,7 +211,7 @@ js_create_platform(uv_loop_t *loop, const js_platform_options_t *options, js_pla
   js_platform_t *platform = malloc(sizeof(js_platform_t));
 
   platform->loop = loop;
-  platform->options = options ? *options : (js_platform_options_t) {};
+  platform->options = options ? *options : (js_platform_options_t){};
 
   *result = platform;
 
@@ -304,7 +304,7 @@ js__on_delegate_finalize(JSRuntime *runtime, JSValue value);
 static JSClassDef js_delegate_class = {
   .class_name = "Delegate",
   .finalizer = js__on_delegate_finalize,
-  .exotic = &(JSClassExoticMethods) {
+  .exotic = &(JSClassExoticMethods){
     .get_own_property = js__on_delegate_get_own_property,
     .get_own_property_names = js__on_delegate_get_own_property_names,
     .delete_property = js__on_delegate_delete_property,
@@ -405,7 +405,7 @@ js__on_uncaught_exception(JSContext *context, JSValue error) {
 
     env->callbacks.uncaught_exception(
       env,
-      &(js_value_t) {error},
+      &(js_value_t){error},
       env->callbacks.uncaught_exception_data
     );
 
@@ -431,8 +431,8 @@ js__on_unhandled_rejection(JSContext *context, JSValue promise, JSValue reason) 
 
     env->callbacks.unhandled_rejection(
       env,
-      &(js_value_t) {reason},
-      &(js_value_t) {promise},
+      &(js_value_t){reason},
+      &(js_value_t){promise},
       env->callbacks.unhandled_rejection_data
     );
 
@@ -607,7 +607,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   int err;
 
   JSRuntime *runtime = JS_NewRuntime2(
-    &(JSMallocFunctions) {
+    &(JSMallocFunctions){
       .js_calloc = js__on_calloc,
       .js_malloc = js__on_malloc,
       .js_free = js__on_free,
@@ -619,7 +619,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   JS_SetSharedArrayBufferFunctions(
     runtime,
-    &(JSSharedArrayBufferFunctions) {
+    &(JSSharedArrayBufferFunctions){
       .sab_alloc = js__on_shared_malloc,
       .sab_free = js__on_shared_free,
       .sab_dup = js__on_shared_dup,
@@ -649,20 +649,6 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   js_env_t *env = malloc(sizeof(js_env_t));
 
-  JS_NewClassID(runtime, &env->classes.external);
-  JS_NewClassID(runtime, &env->classes.finalizer);
-  JS_NewClassID(runtime, &env->classes.type_tag);
-  JS_NewClassID(runtime, &env->classes.function);
-  JS_NewClassID(runtime, &env->classes.constructor);
-  JS_NewClassID(runtime, &env->classes.delegate);
-
-  JS_NewClass(runtime, env->classes.external, &js_external_class);
-  JS_NewClass(runtime, env->classes.finalizer, &js_finalizer_class);
-  JS_NewClass(runtime, env->classes.type_tag, &js_type_tag_class);
-  JS_NewClass(runtime, env->classes.function, &js_function_class);
-  JS_NewClass(runtime, env->classes.constructor, &js_constructor_class);
-  JS_NewClass(runtime, env->classes.delegate, &js_delegate_class);
-
   env->loop = loop;
   env->active_handles = 2;
 
@@ -681,6 +667,13 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   env->promise_rejections = NULL;
 
+  env->classes.external = 0;
+  env->classes.finalizer = 0;
+  env->classes.type_tag = 0;
+  env->classes.function = 0;
+  env->classes.constructor = 0;
+  env->classes.delegate = 0;
+
   env->callbacks.uncaught_exception = NULL;
   env->callbacks.uncaught_exception_data = NULL;
 
@@ -692,6 +685,30 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   JS_SetRuntimeOpaque(env->runtime, env);
   JS_SetContextOpaque(env->context, env);
+
+  JS_NewClassID(runtime, &env->classes.external);
+  err = JS_NewClass(runtime, env->classes.external, &js_external_class);
+  assert(err == 0);
+
+  JS_NewClassID(runtime, &env->classes.finalizer);
+  err = JS_NewClass(runtime, env->classes.finalizer, &js_finalizer_class);
+  assert(err == 0);
+
+  JS_NewClassID(runtime, &env->classes.type_tag);
+  err = JS_NewClass(runtime, env->classes.type_tag, &js_type_tag_class);
+  assert(err == 0);
+
+  JS_NewClassID(runtime, &env->classes.function);
+  err = JS_NewClass(runtime, env->classes.function, &js_function_class);
+  assert(err == 0);
+
+  JS_NewClassID(runtime, &env->classes.constructor);
+  err = JS_NewClass(runtime, env->classes.constructor, &js_constructor_class);
+  assert(err == 0);
+
+  JS_NewClassID(runtime, &env->classes.delegate);
+  err = JS_NewClass(runtime, env->classes.delegate, &js_delegate_class);
+  assert(err == 0);
 
   err = uv_prepare_init(loop, &env->prepare);
   assert(err == 0);
@@ -724,6 +741,16 @@ js__on_handle_close(uv_handle_t *handle) {
   js_env_t *env = (js_env_t *) handle->data;
 
   if (--env->active_handles == 0) {
+    js_module_evaluator_t *evaluator = env->evaluators;
+
+    while (evaluator) {
+      js_module_evaluator_t *next = evaluator->next;
+
+      free(evaluator);
+
+      evaluator = next;
+    }
+
     free(env);
   }
 }
@@ -1154,7 +1181,7 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
   if (module->meta) {
     JSValue meta = JS_GetImportMeta(env->context, module->definition);
 
-    module->meta(env, module, &(js_value_t) {meta}, module->meta_data);
+    module->meta(env, module, &(js_value_t){meta}, module->meta_data);
 
     JS_FreeValue(env->context, meta);
 
@@ -1165,7 +1192,7 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
       err = js_create_promise(env, &deferred, result);
       if (err < 0) return err;
 
-      js_reject_deferred(env, deferred, &(js_value_t) {error});
+      js_reject_deferred(env, deferred, &(js_value_t){error});
 
       JS_FreeValue(env->context, error);
 
@@ -1190,7 +1217,7 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
     err = js_create_promise(env, &deferred, result);
     if (err < 0) return err;
 
-    js_reject_deferred(env, deferred, &(js_value_t) {error});
+    js_reject_deferred(env, deferred, &(js_value_t){error});
 
     JS_FreeValue(env->context, error);
 
@@ -1471,7 +1498,7 @@ js_define_class(js_env_t *env, const char *name, size_t len, js_function_cb cons
       }
     }
 
-    err = js_define_properties(env, &(js_value_t) {prototype}, instance_properties, instance_properties_len);
+    err = js_define_properties(env, &(js_value_t){prototype}, instance_properties, instance_properties_len);
     assert(err == 0);
 
     free(instance_properties);
@@ -1488,7 +1515,7 @@ js_define_class(js_env_t *env, const char *name, size_t len, js_function_cb cons
       }
     }
 
-    err = js_define_properties(env, &(js_value_t) {class}, static_properties, static_properties_len);
+    err = js_define_properties(env, &(js_value_t){class}, static_properties, static_properties_len);
     assert(err == 0);
 
     free(static_properties);
@@ -1673,7 +1700,7 @@ js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descr
   if (delegate->callbacks.has) {
     JSValue property = JS_AtomToValue(env->context, name);
 
-    bool exists = delegate->callbacks.has(env, &(js_value_t) {property}, delegate->data);
+    bool exists = delegate->callbacks.has(env, &(js_value_t){property}, delegate->data);
 
     JS_FreeValue(env->context, property);
 
@@ -1685,7 +1712,7 @@ js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descr
   if (delegate->callbacks.get) {
     JSValue property = JS_AtomToValue(env->context, name);
 
-    js_value_t *result = delegate->callbacks.get(env, &(js_value_t) {property}, delegate->data);
+    js_value_t *result = delegate->callbacks.get(env, &(js_value_t){property}, delegate->data);
 
     JS_FreeValue(env->context, property);
 
@@ -1754,7 +1781,7 @@ js__on_delegate_delete_property(JSContext *context, JSValueConst object, JSAtom 
   if (delegate->callbacks.delete_property) {
     JSValue property = JS_AtomToValue(env->context, name);
 
-    bool success = delegate->callbacks.delete_property(env, &(js_value_t) {property}, delegate->data);
+    bool success = delegate->callbacks.delete_property(env, &(js_value_t){property}, delegate->data);
 
     JS_FreeValue(env->context, property);
 
@@ -1775,7 +1802,7 @@ js__on_delegate_set_property(JSContext *context, JSValueConst object, JSAtom nam
   if (delegate->callbacks.set) {
     JSValue property = JS_AtomToValue(env->context, name);
 
-    bool success = delegate->callbacks.set(env, &(js_value_t) {property}, &(js_value_t) {value}, delegate->data);
+    bool success = delegate->callbacks.set(env, &(js_value_t){property}, &(js_value_t){value}, delegate->data);
 
     JS_FreeValue(env->context, property);
 
@@ -2082,6 +2109,8 @@ js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value
 
   wrapper->value = JS_NewStringLen(env->context, (char *) utf8, utf8_len);
 
+  free(utf8);
+
   *result = wrapper;
 
   js__attach_to_handle_scope(env, env->scope, wrapper);
@@ -2104,6 +2133,8 @@ js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value
   latin1_convert_to_utf8(str, len, utf8);
 
   wrapper->value = JS_NewStringLen(env->context, (char *) utf8, utf8_len);
+
+  free(utf8);
 
   *result = wrapper;
 
