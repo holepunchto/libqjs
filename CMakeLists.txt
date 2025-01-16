@@ -47,6 +47,12 @@ set_target_properties(
   WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
+target_sources(
+  js_shared
+  PRIVATE
+    $<TARGET_OBJECTS:qjs>
+)
+
 target_link_libraries(
   js_shared
   PUBLIC
@@ -64,6 +70,12 @@ set_target_properties(
   PROPERTIES
   OUTPUT_NAME js
   PREFIX lib
+)
+
+target_sources(
+  js_static
+  PRIVATE
+    $<TARGET_OBJECTS:qjs>
 )
 
 target_link_libraries(

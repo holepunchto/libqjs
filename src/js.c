@@ -1859,7 +1859,7 @@ js__on_finalizer_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
   js_finalizer_list_t *next = (js_finalizer_list_t *) JS_GetOpaque(value, env->classes.finalizer);
-  js_finalizer_list_t *prev = NULL;
+  js_finalizer_list_t *prev;
 
   while (next) {
     js_finalizer_t *finalizer = &next->finalizer;
