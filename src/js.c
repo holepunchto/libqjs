@@ -211,7 +211,7 @@ js_create_platform(uv_loop_t *loop, const js_platform_options_t *options, js_pla
   js_platform_t *platform = malloc(sizeof(js_platform_t));
 
   platform->loop = loop;
-  platform->options = options ? *options : (js_platform_options_t){};
+  platform->options = options ? *options : (js_platform_options_t) {};
 
   *result = platform;
 
@@ -304,7 +304,7 @@ js__on_delegate_finalize(JSRuntime *runtime, JSValue value);
 static JSClassDef js_delegate_class = {
   .class_name = "Delegate",
   .finalizer = js__on_delegate_finalize,
-  .exotic = &(JSClassExoticMethods){
+  .exotic = &(JSClassExoticMethods) {
     .get_own_property = js__on_delegate_get_own_property,
     .get_own_property_names = js__on_delegate_get_own_property_names,
     .delete_property = js__on_delegate_delete_property,
@@ -405,7 +405,7 @@ js__on_uncaught_exception(JSContext *context, JSValue error) {
 
     env->callbacks.uncaught_exception(
       env,
-      &(js_value_t){error},
+      &(js_value_t) {error},
       env->callbacks.uncaught_exception_data
     );
 
@@ -431,8 +431,8 @@ js__on_unhandled_rejection(JSContext *context, JSValue promise, JSValue reason) 
 
     env->callbacks.unhandled_rejection(
       env,
-      &(js_value_t){reason},
-      &(js_value_t){promise},
+      &(js_value_t) {reason},
+      &(js_value_t) {promise},
       env->callbacks.unhandled_rejection_data
     );
 
@@ -607,7 +607,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   int err;
 
   JSRuntime *runtime = JS_NewRuntime2(
-    &(JSMallocFunctions){
+    &(JSMallocFunctions) {
       .js_calloc = js__on_calloc,
       .js_malloc = js__on_malloc,
       .js_free = js__on_free,
@@ -619,7 +619,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   JS_SetSharedArrayBufferFunctions(
     runtime,
-    &(JSSharedArrayBufferFunctions){
+    &(JSSharedArrayBufferFunctions) {
       .sab_alloc = js__on_shared_malloc,
       .sab_free = js__on_shared_free,
       .sab_dup = js__on_shared_dup,
@@ -994,9 +994,17 @@ js_create_module(js_env_t *env, const char *name, size_t len, int offset, js_val
   module->source = JS_DupValue(env->context, source->value);
   module->bytecode = JS_NULL;
   module->definition = NULL;
-  module->name = strndup(name, len);
   module->meta = cb;
   module->meta_data = data;
+
+  if (len == (size_t) -1) {
+    module->name = strdup(name);
+  } else {
+    module->name = malloc(len + 1);
+    module->name[len] = '\0';
+
+    memcpy(module->name, name, len);
+  }
 
   *result = module;
 
@@ -1037,9 +1045,17 @@ js_create_synthetic_module(js_env_t *env, const char *name, size_t len, js_value
   module->source = JS_NULL;
   module->bytecode = JS_NULL;
   module->definition = JS_NewCModule(env->context, name, js__on_evaluate_module);
-  module->name = strndup(name, len);
   module->meta = NULL;
   module->meta_data = NULL;
+
+  if (len == (size_t) -1) {
+    module->name = strdup(name);
+  } else {
+    module->name = malloc(len + 1);
+    module->name[len] = '\0';
+
+    memcpy(module->name, name, len);
+  }
 
   for (size_t i = 0; i < names_len; i++) {
     const char *str = JS_ToCString(env->context, export_names[i]->value);
@@ -1181,7 +1197,7 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
   if (module->meta) {
     JSValue meta = JS_GetImportMeta(env->context, module->definition);
 
-    module->meta(env, module, &(js_value_t){meta}, module->meta_data);
+    module->meta(env, module, &(js_value_t) {meta}, module->meta_data);
 
     JS_FreeValue(env->context, meta);
 
@@ -1192,7 +1208,7 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
       err = js_create_promise(env, &deferred, result);
       if (err < 0) return err;
 
-      js_reject_deferred(env, deferred, &(js_value_t){error});
+      js_reject_deferred(env, deferred, &(js_value_t) {error});
 
       JS_FreeValue(env->context, error);
 
@@ -1217,7 +1233,7 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
     err = js_create_promise(env, &deferred, result);
     if (err < 0) return err;
 
-    js_reject_deferred(env, deferred, &(js_value_t){error});
+    js_reject_deferred(env, deferred, &(js_value_t) {error});
 
     JS_FreeValue(env->context, error);
 
@@ -1498,7 +1514,7 @@ js_define_class(js_env_t *env, const char *name, size_t len, js_function_cb cons
       }
     }
 
-    err = js_define_properties(env, &(js_value_t){prototype}, instance_properties, instance_properties_len);
+    err = js_define_properties(env, &(js_value_t) {prototype}, instance_properties, instance_properties_len);
     assert(err == 0);
 
     free(instance_properties);
@@ -1515,7 +1531,7 @@ js_define_class(js_env_t *env, const char *name, size_t len, js_function_cb cons
       }
     }
 
-    err = js_define_properties(env, &(js_value_t){class}, static_properties, static_properties_len);
+    err = js_define_properties(env, &(js_value_t) {class}, static_properties, static_properties_len);
     assert(err == 0);
 
     free(static_properties);
@@ -1700,7 +1716,7 @@ js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descr
   if (delegate->callbacks.has) {
     JSValue property = JS_AtomToValue(env->context, name);
 
-    bool exists = delegate->callbacks.has(env, &(js_value_t){property}, delegate->data);
+    bool exists = delegate->callbacks.has(env, &(js_value_t) {property}, delegate->data);
 
     JS_FreeValue(env->context, property);
 
@@ -1712,7 +1728,7 @@ js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descr
   if (delegate->callbacks.get) {
     JSValue property = JS_AtomToValue(env->context, name);
 
-    js_value_t *result = delegate->callbacks.get(env, &(js_value_t){property}, delegate->data);
+    js_value_t *result = delegate->callbacks.get(env, &(js_value_t) {property}, delegate->data);
 
     JS_FreeValue(env->context, property);
 
@@ -1781,7 +1797,7 @@ js__on_delegate_delete_property(JSContext *context, JSValueConst object, JSAtom 
   if (delegate->callbacks.delete_property) {
     JSValue property = JS_AtomToValue(env->context, name);
 
-    bool success = delegate->callbacks.delete_property(env, &(js_value_t){property}, delegate->data);
+    bool success = delegate->callbacks.delete_property(env, &(js_value_t) {property}, delegate->data);
 
     JS_FreeValue(env->context, property);
 
@@ -1802,7 +1818,7 @@ js__on_delegate_set_property(JSContext *context, JSValueConst object, JSAtom nam
   if (delegate->callbacks.set) {
     JSValue property = JS_AtomToValue(env->context, name);
 
-    bool success = delegate->callbacks.set(env, &(js_value_t){property}, &(js_value_t){value}, delegate->data);
+    bool success = delegate->callbacks.set(env, &(js_value_t) {property}, &(js_value_t) {value}, delegate->data);
 
     JS_FreeValue(env->context, property);
 
