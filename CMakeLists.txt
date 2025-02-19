@@ -47,12 +47,6 @@ set_target_properties(
   WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
-target_sources(
-  js_shared
-  PRIVATE
-    $<TARGET_OBJECTS:qjs>
-)
-
 target_link_libraries(
   js_shared
   PUBLIC
@@ -61,6 +55,8 @@ target_link_libraries(
     utf_shared
   PRIVATE
     js
+  PRIVATE
+    $<TARGET_OBJECTS:qjs>
 )
 
 add_library(js_static STATIC)
@@ -72,12 +68,6 @@ set_target_properties(
   PREFIX lib
 )
 
-target_sources(
-  js_static
-  PRIVATE
-    $<TARGET_OBJECTS:qjs>
-)
-
 target_link_libraries(
   js_static
   PUBLIC
@@ -86,6 +76,8 @@ target_link_libraries(
     utf_static
   PRIVATE
     js
+  PRIVATE
+    $<TARGET_OBJECTS:qjs>
 )
 
 install(TARGETS js_shared js_static)
