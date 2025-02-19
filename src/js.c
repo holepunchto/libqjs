@@ -2140,7 +2140,7 @@ js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  if (len == (size_t) -1) len = wcslen((wchar_t *) str);
+  if (len == (size_t) -1) len = strlen((char *) str);
 
   size_t utf8_len = utf8_length_from_latin1(str, len);
 
