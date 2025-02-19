@@ -4218,6 +4218,37 @@ js_has_property(js_env_t *env, js_value_t *object, js_value_t *key, bool *result
 }
 
 int
+js_has_own_property(js_env_t *env, js_value_t *object, js_value_t *key, bool *result) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  JSAtom atom = JS_ValueToAtom(env->context, key->value);
+
+  env->depth++;
+
+  int success = JS_HasProperty(env->context, object->value, atom);
+
+  JS_FreeAtom(env->context, atom);
+
+  if (env->depth == 1) js__on_run_microtasks(env);
+
+  env->depth--;
+
+  if (success < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__on_uncaught_exception(env->context, error);
+    }
+
+    return js__error(env);
+  }
+
+  if (result) *result = success == 1;
+
+  return 0;
+}
+
+int
 js_set_property(js_env_t *env, js_value_t *object, js_value_t *key, js_value_t *value) {
   if (JS_HasException(env->context)) return js__error(env);
 
