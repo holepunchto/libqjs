@@ -5341,14 +5341,14 @@ js_request_garbage_collection(js_env_t *env) {
 }
 
 int
-js_create_inspector(js_env_t *env, js_inspector_t **result) {
+js_get_heap_statistics(js_env_t *env, js_heap_statistics_t *result) {
   js_throw_error(env, NULL, "Unsupported operation");
 
   return js__error(env);
 }
 
 int
-js_get_heap_statistics(js_env_t *env, js_heap_statistics_t *result) {
+js_create_inspector(js_env_t *env, js_inspector_t **result) {
   js_throw_error(env, NULL, "Unsupported operation");
 
   return js__error(env);
