@@ -221,7 +221,7 @@ foreach(test IN LISTS tests)
   target_link_libraries(
     ${test}
     PRIVATE
-      js_static
+      js_shared
   )
 
   add_test(
@@ -234,6 +234,13 @@ foreach(test IN LISTS tests)
     ${test}
     PROPERTIES
     TIMEOUT 30
+  )
+
+  add_custom_command(
+    TARGET ${test}
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:${test}> $<TARGET_RUNTIME_DLLS:${test}>
+    COMMAND_EXPAND_LISTS
   )
 
   if(${test} IN_LIST skipped_tests)
