@@ -215,6 +215,8 @@ list(APPEND skipped_tests
   run-script-in-context
 )
 
+set(test_dlls)
+
 foreach(test IN LISTS tests)
   add_executable(${test} ${js}/test/${test}.c)
 
@@ -236,13 +238,7 @@ foreach(test IN LISTS tests)
     TIMEOUT 30
   )
 
-  add_custom_command(
-    TARGET ${test}
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:${test}> $<TARGET_RUNTIME_DLLS:${test}>
-    COMMAND_EXPAND_LISTS
-    USES_TERMINAL
-  )
+  list(APPEND test_dlls $<TARGET_RUNTIME_DLLS:${test}>)
 
   if(${test} IN_LIST skipped_tests)
     set_tests_properties(
@@ -251,4 +247,17 @@ foreach(test IN LISTS tests)
       DISABLED TRUE
     )
   endif()
+endforeach()
+
+list(REMOVE_DUPLICATES test_dlls)
+
+add_custom_target(
+  copy_test_dlls
+  ALL
+  COMMAND ${CMAKE_COMMAND} -E copy -t ${CMAKE_BINARY_DIR} ${test_dlls}
+  COMMAND_EXPAND_LISTS
+)
+
+foreach(test IN LISTS tests)
+  add_dependencies(${test} copy_test_dlls)
 endforeach()
