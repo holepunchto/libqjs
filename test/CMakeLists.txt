@@ -241,7 +241,7 @@ foreach(test IN LISTS tests)
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:${test}> $<TARGET_RUNTIME_DLLS:${test}>
     COMMAND_EXPAND_LISTS
-    USES_TERMINAL TRUE
+    USES_TERMINAL
   )
 
   if(${test} IN_LIST skipped_tests)
