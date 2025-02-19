@@ -215,15 +215,13 @@ list(APPEND skipped_tests
   run-script-in-context
 )
 
-set(test_dlls)
-
 foreach(test IN LISTS tests)
   add_executable(${test} ${js}/test/${test}.c)
 
   target_link_libraries(
     ${test}
     PRIVATE
-      js_shared
+      js_static
   )
 
   add_test(
@@ -238,8 +236,6 @@ foreach(test IN LISTS tests)
     TIMEOUT 30
   )
 
-  list(APPEND test_dlls $<TARGET_RUNTIME_DLLS:${test}>)
-
   if(${test} IN_LIST skipped_tests)
     set_tests_properties(
       ${test}
@@ -247,17 +243,4 @@ foreach(test IN LISTS tests)
       DISABLED TRUE
     )
   endif()
-endforeach()
-
-list(REMOVE_DUPLICATES test_dlls)
-
-add_custom_target(
-  copy_test_dlls
-  ALL
-  COMMAND ${CMAKE_COMMAND} -E copy -t ${CMAKE_BINARY_DIR} ${test_dlls}
-  COMMAND_EXPAND_LISTS
-)
-
-foreach(test IN LISTS tests)
-  add_dependencies(${test} copy_test_dlls)
 endforeach()
