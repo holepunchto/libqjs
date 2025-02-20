@@ -445,7 +445,7 @@ js__on_unhandled_rejection(JSContext *context, JSValue promise, JSValue reason) 
 }
 
 static void
-js__on_promise_rejection(JSContext *context, JSValueConst promise, JSValueConst reason, JS_BOOL is_handled, void *opaque) {
+js__on_promise_rejection(JSContext *context, JSValueConst promise, JSValueConst reason, bool is_handled, void *opaque) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
   if (env->callbacks.unhandled_rejection == NULL) return;
@@ -5342,7 +5342,7 @@ js_terminate_execution(js_env_t *env) {
 
   JSValue error = JS_GetException(env->context);
 
-  JS_SetUncatchableError(env->context, error, true);
+  JS_SetUncatchableError(env->context, error);
 
   JS_Throw(env->context, error);
 

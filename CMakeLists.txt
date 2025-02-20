@@ -11,7 +11,7 @@ add_library(c++ INTERFACE)
 add_library(js OBJECT)
 
 fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
-fetch_package("github:holepunchto/quickjs-ng#master")
+fetch_package("github:quickjs-ng/quickjs#master")
 
 set_target_properties(
   js
