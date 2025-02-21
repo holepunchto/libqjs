@@ -4140,6 +4140,32 @@ js_get_value_string_utf16le(js_env_t *env, js_value_t *value, utf16_t *str, size
 }
 
 int
+js_get_value_string_latin1(js_env_t *env, js_value_t *value, latin1_t *str, size_t len, size_t *result) {
+  // Allow continuing even with a pending exception
+
+  size_t cstr_len;
+  const char *cstr = JS_ToCStringLen(env->context, &cstr_len, value->value);
+
+  size_t latin1_len = latin1_length_from_utf8((utf8_t *) cstr, cstr_len);
+
+  if (str == NULL) {
+    *result = latin1_len;
+  } else if (len != 0) {
+    size_t written = latin1_len < len ? latin1_len : len;
+
+    utf8_convert_to_latin1((utf8_t *) cstr, cstr_len, str);
+
+    if (written < len) str[written] = '\0';
+
+    if (result) *result = written;
+  } else if (result) *result = 0;
+
+  JS_FreeCString(env->context, cstr);
+
+  return 0;
+}
+
+int
 js_get_value_external(js_env_t *env, js_value_t *value, void **result) {
   // Allow continuing even with a pending exception
 
