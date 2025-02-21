@@ -203,13 +203,6 @@ list(APPEND skipped_tests
   create-threadsafe-function-with-finalizer
   
   # Not implemented
-  add-teardown-callback
-  add-teardown-callback-deferred
-  add-teardown-callback-deferred-remove
-  add-teardown-callback-multiple
-  add-teardown-callback-remove
-
-  # Not implemented
   call-function-in-context
   run-module-in-context
   run-script-in-context

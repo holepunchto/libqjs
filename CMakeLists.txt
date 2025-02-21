@@ -11,6 +11,7 @@ add_library(c++ INTERFACE)
 add_library(js OBJECT)
 
 fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
+fetch_package("github:holepunchto/libintrusive")
 fetch_package("github:quickjs-ng/quickjs#master")
 
 set_target_properties(
@@ -36,6 +37,7 @@ target_include_directories(
     $<TARGET_PROPERTY:qjs,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:uv,INTERFACE_INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:utf,INTERFACE_INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:intrusive,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
 add_library(js_shared SHARED)
