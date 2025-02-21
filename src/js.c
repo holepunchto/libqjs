@@ -704,7 +704,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
     }
   );
 
-  JS_SetMaxStackSize(runtime, 864 * 1024);
+  JS_SetMaxStackSize(runtime, 0);
   JS_SetCanBlock(runtime, false);
   JS_SetModuleLoaderFunc(runtime, NULL, js__on_resolve_module, NULL);
   JS_SetHostPromiseRejectionTracker(runtime, js__on_promise_rejection, NULL);
