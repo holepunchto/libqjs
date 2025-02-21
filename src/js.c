@@ -2964,6 +2964,8 @@ err:
 
 static void
 js__on_external_arraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) {
+  if (ptr == NULL) return;
+
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
   js_finalizer_t *finalizer = (js_finalizer_t *) opaque;
