@@ -3525,13 +3525,7 @@ int
 js_is_date(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Date");
-
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+  *result = JS_IsDate(value->value);
 
   return 0;
 }
@@ -3540,13 +3534,7 @@ int
 js_is_regexp(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "RegExp");
-
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+  *result = JS_IsRegExp(value->value);
 
   return 0;
 }
@@ -3564,13 +3552,7 @@ int
 js_is_promise(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Promise");
-
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+  *result = JS_IsPromise(value->value);
 
   return 0;
 }
@@ -3579,13 +3561,7 @@ int
 js_is_proxy(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Proxy");
-
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+  *result = JS_IsProxy(value->value);
 
   return 0;
 }
@@ -3594,13 +3570,7 @@ int
 js_is_map(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Map");
-
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+  *result = JS_IsMap(value->value);
 
   return 0;
 }
@@ -3618,13 +3588,17 @@ int
 js_is_set(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Set");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Set");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3642,13 +3616,17 @@ int
 js_is_weak_map(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakMap");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakMap");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3657,13 +3635,17 @@ int
 js_is_weak_set(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakSet");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakSet");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3672,13 +3654,17 @@ int
 js_is_weak_ref(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakRef");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakRef");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3687,13 +3673,7 @@ int
 js_is_arraybuffer(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "ArrayBuffer");
-
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+  *result = JS_IsArrayBuffer(value->value);
 
   return 0;
 }
@@ -3713,13 +3693,17 @@ int
 js_is_sharedarraybuffer(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "SharedArrayBuffer");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "SharedArrayBuffer");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3728,7 +3712,8 @@ int
 js_is_typedarray(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
 
 #define V(class) \
   { \
@@ -3745,24 +3730,26 @@ js_is_typedarray(js_env_t *env, js_value_t *value, bool *result) {
     JS_FreeValue(env->context, constructor); \
   }
 
-  V("Int8Array");
-  V("Uint8Array");
-  V("Uint8ClampedArray");
-  V("Int16Array");
-  V("Uint16Array");
-  V("Int32Array");
-  V("Uint32Array");
-  V("Float32Array");
-  V("Float64Array");
-  V("BigInt64Array");
-  V("BigUint64Array");
-
+    V("Int8Array");
+    V("Uint8Array");
+    V("Uint8ClampedArray");
+    V("Int16Array");
+    V("Uint16Array");
+    V("Int32Array");
+    V("Uint32Array");
+    V("Float32Array");
+    V("Float64Array");
+    V("BigInt64Array");
+    V("BigUint64Array");
 #undef V
 
-  *result = false;
+    *result = false;
 
-done:
-  JS_FreeValue(env->context, global);
+  done:
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3771,13 +3758,17 @@ int
 js_is_int8array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Int8Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Int8Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3786,13 +3777,17 @@ int
 js_is_uint8array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint8Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint8Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3801,13 +3796,17 @@ int
 js_is_uint8clampedarray(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint8ClampedArray");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint8ClampedArray");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3816,13 +3815,17 @@ int
 js_is_int16array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Int16Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Int16Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3831,13 +3834,17 @@ int
 js_is_uint16array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint16Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint16Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3846,13 +3853,17 @@ int
 js_is_int32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Int32Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Int32Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3861,13 +3872,17 @@ int
 js_is_uint32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint32Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint32Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3883,13 +3898,17 @@ int
 js_is_float32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Float32Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Float32Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3898,13 +3917,17 @@ int
 js_is_float64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Float64Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Float64Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3913,13 +3936,17 @@ int
 js_is_bigint64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "BigInt64Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "BigInt64Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3928,13 +3955,17 @@ int
 js_is_biguint64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "BigUint64Array");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "BigUint64Array");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -3943,13 +3974,17 @@ int
 js_is_dataview(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "DataView");
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "DataView");
 
-  *result = JS_IsInstanceOf(env->context, value->value, constructor);
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
