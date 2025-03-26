@@ -4196,14 +4196,96 @@ js_get_value_date(js_env_t *env, js_value_t *value, double *result) {
 }
 
 int
-js_get_array_length(js_env_t *env, js_value_t *value, uint32_t *result) {
+js_get_array_length(js_env_t *env, js_value_t *array, uint32_t *result) {
   // Allow continuing even with a pending exception
 
-  JSValue length = JS_GetPropertyStr(env->context, value->value, "length");
+  JSValue length = JS_GetPropertyStr(env->context, array->value, "length");
 
   JS_ToUint32(env->context, result, length);
 
   JS_FreeValue(env->context, length);
+
+  return 0;
+}
+
+int
+js_get_array_elements(js_env_t *env, js_value_t *array, js_value_t **elements, size_t len, size_t offset, uint32_t *result) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  uint32_t written = 0;
+
+  env->depth++;
+
+  uint32_t m;
+  err = js_get_array_length(env, array, &m);
+  assert(err == 0);
+
+  for (uint32_t i = 0, n = len, j = offset; i < n && j < m; i++, j++) {
+    JSValue value = JS_GetPropertyUint32(env->context, array->value, j);
+
+    if (JS_IsException(value)) {
+      if (env->depth == 1) js__on_run_microtasks(env);
+
+      env->depth--;
+
+      if (env->depth == 0) {
+        JSValue error = JS_GetException(env->context);
+
+        js__on_uncaught_exception(env->context, error);
+      }
+
+      return js__error(env);
+    }
+
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = value;
+
+    elements[i] = wrapper;
+
+    js__attach_to_handle_scope(env, env->scope, wrapper);
+
+    written++;
+  }
+
+  if (env->depth == 1) js__on_run_microtasks(env);
+
+  env->depth--;
+
+  if (result) *result = written;
+
+  return 0;
+}
+
+int
+js_set_array_elements(js_env_t *env, js_value_t *array, const js_value_t *elements[], size_t len, size_t offset) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  env->depth++;
+
+  for (uint32_t i = 0, n = len, j = offset; i < n; i++, j++) {
+    int success = JS_SetPropertyUint32(env->context, array->value, j, JS_DupValue(env->context, elements[i]->value));
+
+    if (env->depth == 1) js__on_run_microtasks(env);
+
+    env->depth--;
+
+    if (success < 0) {
+      if (env->depth == 0) {
+        JSValue error = JS_GetException(env->context);
+
+        js__on_uncaught_exception(env->context, error);
+      }
+
+      return js__error(env);
+    }
+  }
+
+  if (env->depth == 1) js__on_run_microtasks(env);
+
+  env->depth--;
 
   return 0;
 }
