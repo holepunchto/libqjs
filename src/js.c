@@ -3151,10 +3151,11 @@ js_create_typedarray(js_env_t *env, js_typedarray_type_t type, size_t len, js_va
     V("Int8Array", js_int8array);
     V("Uint8Array", js_uint8array);
     V("Uint8ClampedArray", js_uint8clampedarray);
-    V("Int16Array", js_int16_array);
+    V("Int16Array", js_int16array);
     V("Uint16Array", js_uint16array);
     V("Int32Array", js_int32array);
     V("Uint32Array", js_uint32array);
+    V("Float16Array", js_float16array);
     V("Float32Array", js_float32array);
     V("Float64Array", js_float64array);
     V("BigInt64Array", js_bigint64array);
@@ -3475,7 +3476,7 @@ int
 js_is_array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsArray(env->context, value->value);
+  *result = JS_IsArray(value->value);
 
   return 0;
 }
@@ -3867,6 +3868,13 @@ js_is_uint32array(js_env_t *env, js_value_t *value, bool *result) {
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
+js_is_float16array(js_env_t *env, js_value_t *value, bool *result) {
+  *result = false;
 
   return 0;
 }
@@ -4886,7 +4894,7 @@ js_get_typedarray_info(js_env_t *env, js_value_t *typedarray, js_typedarray_type
     V("Int8Array", js_int8array);
     V("Uint8Array", js_uint8array);
     V("Uint8ClampedArray", js_uint8clampedarray);
-    V("Int16Array", js_int16_array);
+    V("Int16Array", js_int16array);
     V("Uint16Array", js_uint16array);
     V("Int32Array", js_int32array);
     V("Uint32Array", js_uint32array);
