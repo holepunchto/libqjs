@@ -243,8 +243,6 @@ struct js_threadsafe_function_s {
 
 static const char *js_platform_identifier = "quickjs";
 
-static const char *js_platform_version = "2021-03-27";
-
 int
 js_create_platform(uv_loop_t *loop, const js_platform_options_t *options, js_platform_t **result) {
   js_platform_t *platform = malloc(sizeof(js_platform_t));
@@ -273,7 +271,7 @@ js_get_platform_identifier(js_platform_t *platform, const char **result) {
 
 int
 js_get_platform_version(js_platform_t *platform, const char **result) {
-  *result = js_platform_version;
+  *result = JS_GetVersion();
 
   return 0;
 }

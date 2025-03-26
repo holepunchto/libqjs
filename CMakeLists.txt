@@ -12,7 +12,7 @@ add_library(js OBJECT)
 
 fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
 fetch_package("github:holepunchto/libintrusive")
-fetch_package("github:quickjs-ng/quickjs#master")
+fetch_package("github:quickjs-ng/quickjs@0.9.0")
 
 set_target_properties(
   js
