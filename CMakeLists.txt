@@ -6,8 +6,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 project(js C)
 
-add_library(v8 INTERFACE)
-add_library(c++ INTERFACE)
 add_library(js OBJECT)
 
 fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
