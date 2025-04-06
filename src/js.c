@@ -2215,7 +2215,7 @@ js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value
 
   size_t utf8_len = utf8_length_from_utf16le(str, len);
 
-  utf8_t *utf8 = malloc(len);
+  utf8_t *utf8 = malloc(utf8_len);
 
   utf16le_convert_to_utf8(str, len, utf8);
 
@@ -2240,7 +2240,7 @@ js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value
 
   size_t utf8_len = utf8_length_from_latin1(str, len);
 
-  utf8_t *utf8 = malloc(len);
+  utf8_t *utf8 = malloc(utf8_len);
 
   latin1_convert_to_utf8(str, len, utf8);
 
