@@ -4832,42 +4832,6 @@ js_release_string_view(js_env_t *env, js_string_view_t *view) {
 }
 
 int
-js_get_typedarray_view(js_env_t *env, js_value_t *typedarray, js_typedarray_type_t *type, void **data, size_t *len, js_typedarray_view_t **result) {
-  // Allow continuing even with a pending exception
-
-  js_get_typedarray_info(env, typedarray, type, data, len, NULL, NULL);
-
-  *result = NULL;
-
-  return 0;
-}
-
-int
-js_release_typedarray_view(js_env_t *env, js_typedarray_view_t *view) {
-  // Allow continuing even with a pending exception
-
-  return 0;
-}
-
-int
-js_get_dataview_view(js_env_t *env, js_value_t *dataview, void **data, size_t *len, js_dataview_view_t **result) {
-  // Allow continuing even with a pending exception
-
-  js_get_dataview_info(env, dataview, data, len, NULL, NULL);
-
-  *result = NULL;
-
-  return 0;
-}
-
-int
-js_release_dataview_view(js_env_t *env, js_dataview_view_t *view) {
-  // Allow continuing even with a pending exception
-
-  return 0;
-}
-
-int
 js_get_callback_info(js_env_t *env, const js_callback_info_t *info, size_t *argc, js_value_t *argv[], js_value_t **receiver, void **data) {
   // Allow continuing even with a pending exception
 
