@@ -237,7 +237,7 @@ foreach(test IN LISTS tests)
     set_tests_properties(
       ${test}
       PROPERTIES
-      DISABLED TRUE
+      DISABLED ON
     )
   endif()
 endforeach()
