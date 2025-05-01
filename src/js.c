@@ -521,13 +521,9 @@ static inline void
 js__on_run_microtasks(js_env_t *env) {
   int err;
 
-  js_handle_scope_t *scope;
-  err = js_open_handle_scope(env, &scope);
-  assert(err == 0);
-
-  JSContext *context;
-
   for (;;) {
+    JSContext *context;
+
     err = JS_ExecutePendingJob(env->runtime, &context);
 
     if (err == 0) break;
@@ -535,7 +531,14 @@ js__on_run_microtasks(js_env_t *env) {
     if (err < 0) {
       JSValue error = JS_GetException(context);
 
+      js_handle_scope_t *scope;
+      err = js_open_handle_scope(env, &scope);
+      assert(err == 0);
+
       js__on_uncaught_exception(context, error);
+
+      err = js_close_handle_scope(env, scope);
+      assert(err == 0);
     }
   }
 
@@ -551,10 +554,9 @@ js__on_run_microtasks(js_env_t *env) {
     next = next->next;
 
     free(prev);
-  }
 
-  err = js_close_handle_scope(env, scope);
-  assert(err == 0);
+    js__on_run_microtasks(env);
+  }
 }
 
 static void
