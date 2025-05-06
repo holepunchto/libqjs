@@ -47,6 +47,12 @@ set_target_properties(
   WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
+target_include_directories(
+  js_shared
+  INTERFACE
+    $<TARGET_PROPERTY:js,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
 target_link_libraries(
   js_shared
   PUBLIC
@@ -66,6 +72,12 @@ set_target_properties(
   PROPERTIES
   OUTPUT_NAME js
   PREFIX lib
+)
+
+target_include_directories(
+  js_static
+  INTERFACE
+    $<TARGET_PROPERTY:js,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
 target_link_libraries(
