@@ -2,6 +2,7 @@
 #include <intrusive.h>
 #include <intrusive/list.h>
 #include <js.h>
+#include <limits.h>
 #include <math.h>
 #include <quickjs.h>
 #include <stdarg.h>
@@ -272,6 +273,14 @@ js_get_platform_identifier(js_platform_t *platform, const char **result) {
 int
 js_get_platform_version(js_platform_t *platform, const char **result) {
   *result = JS_GetVersion();
+
+  return 0;
+}
+
+int
+js_get_platform_limits(js_platform_t *platform, js_platform_limits_t *result) {
+  result->arraybuffer_length = INT32_MAX;
+  result->string_length = 0x3fffffff;
 
   return 0;
 }
@@ -2190,15 +2199,29 @@ js_create_bigint_uint64(js_env_t *env, uint64_t value, js_value_t **result) {
 
 int
 js_create_string_utf8(js_env_t *env, const utf8_t *str, size_t len, js_value_t **result) {
-  // Allow continuing even with a pending exception
+  if (JS_HasException(env->context)) return js__error(env);
+
+  JSValue value;
+
+  if (len == (size_t) -1) {
+    value = JS_NewString(env->context, (char *) str);
+  } else {
+    value = JS_NewStringLen(env->context, (char *) str, len);
+  }
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__on_uncaught_exception(env->context, error);
+    }
+
+    return js__error(env);
+  }
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
-  if (len == (size_t) -1) {
-    wrapper->value = JS_NewString(env->context, (char *) str);
-  } else {
-    wrapper->value = JS_NewStringLen(env->context, (char *) str, len);
-  }
+  wrapper->value = value;
 
   *result = wrapper;
 
@@ -2209,9 +2232,7 @@ js_create_string_utf8(js_env_t *env, const utf8_t *str, size_t len, js_value_t *
 
 int
 js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value_t **result) {
-  // Allow continuing even with a pending exception
-
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  if (JS_HasException(env->context)) return js__error(env);
 
   if (len == (size_t) -1) len = wcslen((wchar_t *) str);
 
@@ -2221,9 +2242,23 @@ js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value
 
   utf16le_convert_to_utf8(str, len, utf8);
 
-  wrapper->value = JS_NewStringLen(env->context, (char *) utf8, utf8_len);
+  JSValue value = JS_NewStringLen(env->context, (char *) utf8, utf8_len);
 
   free(utf8);
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__on_uncaught_exception(env->context, error);
+    }
+
+    return js__error(env);
+  }
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = value;
 
   *result = wrapper;
 
@@ -2234,9 +2269,7 @@ js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value
 
 int
 js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value_t **result) {
-  // Allow continuing even with a pending exception
-
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  if (JS_HasException(env->context)) return js__error(env);
 
   if (len == (size_t) -1) len = strlen((char *) str);
 
@@ -2246,9 +2279,23 @@ js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value
 
   latin1_convert_to_utf8(str, len, utf8);
 
-  wrapper->value = JS_NewStringLen(env->context, (char *) utf8, utf8_len);
+  JSValue value = JS_NewStringLen(env->context, (char *) utf8, utf8_len);
 
   free(utf8);
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__on_uncaught_exception(env->context, error);
+    }
+
+    return js__error(env);
+  }
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = value;
 
   *result = wrapper;
 
@@ -2259,11 +2306,9 @@ js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value
 
 int
 js_create_external_string_utf8(js_env_t *env, utf8_t *str, size_t len, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result, bool *copied) {
-  // Allow continuing even with a pending exception
-
   int err;
   err = js_create_string_utf8(env, str, len, result);
-  assert(err == 0);
+  if (err < 0) return err;
 
   if (copied) *copied = true;
 
@@ -2274,11 +2319,9 @@ js_create_external_string_utf8(js_env_t *env, utf8_t *str, size_t len, js_finali
 
 int
 js_create_external_string_utf16le(js_env_t *env, utf16_t *str, size_t len, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result, bool *copied) {
-  // Allow continuing even with a pending exception
-
   int err;
   err = js_create_string_utf16le(env, str, len, result);
-  assert(err == 0);
+  if (err < 0) return err;
 
   if (copied) *copied = true;
 
@@ -2289,11 +2332,9 @@ js_create_external_string_utf16le(js_env_t *env, utf16_t *str, size_t len, js_fi
 
 int
 js_create_external_string_latin1(js_env_t *env, latin1_t *str, size_t len, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result, bool *copied) {
-  // Allow continuing even with a pending exception
-
   int err;
   err = js_create_string_latin1(env, str, len, result);
-  assert(err == 0);
+  if (err < 0) return err;
 
   if (copied) *copied = true;
 
@@ -2853,7 +2894,7 @@ js_create_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t **resul
 
   int err;
 
-  if (len > UINT32_MAX) goto err;
+  if (len > INT32_MAX) goto err;
 
   uint8_t *bytes = malloc(len);
 
@@ -2933,7 +2974,7 @@ js_create_unsafe_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t 
 
   int err;
 
-  if (len > UINT32_MAX) goto err;
+  if (len > INT32_MAX) goto err;
 
   uint8_t *bytes = malloc(len);
 
