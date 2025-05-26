@@ -2862,7 +2862,7 @@ js_create_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t **resul
 
   int err;
 
-  if (len > UINT32_MAX) goto err;
+  if (len > INT32_MAX) goto err;
 
   uint8_t *bytes = malloc(len);
 
@@ -2942,7 +2942,7 @@ js_create_unsafe_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t 
 
   int err;
 
-  if (len > UINT32_MAX) goto err;
+  if (len > INT32_MAX) goto err;
 
   uint8_t *bytes = malloc(len);
 
