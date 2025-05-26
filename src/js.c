@@ -2221,6 +2221,8 @@ js_create_string_utf8(js_env_t *env, const utf8_t *str, size_t len, js_value_t *
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
+  wrapper->value = value;
+
   *result = wrapper;
 
   js__attach_to_handle_scope(env, env->scope, wrapper);
@@ -2256,6 +2258,8 @@ js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
+  wrapper->value = value;
+
   *result = wrapper;
 
   js__attach_to_handle_scope(env, env->scope, wrapper);
@@ -2290,6 +2294,8 @@ js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value
   }
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = value;
 
   *result = wrapper;
 
