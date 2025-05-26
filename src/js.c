@@ -1361,7 +1361,11 @@ static void
 js__on_reference_finalize(js_env_t *env, void *data, void *finalize_hint) {
   js_ref_t *reference = (js_ref_t *) data;
 
+  JS_FreeValue(env->context, reference->symbol);
+
   reference->value = JS_NULL;
+  reference->count = 0;
+  reference->symbol = JS_NULL;
   reference->finalized = true;
 }
 
@@ -1369,50 +1373,60 @@ static inline void
 js__set_weak_reference(js_env_t *env, js_ref_t *reference) {
   if (reference->finalized) return;
 
-  int err;
+  if (JS_IsObject(reference->value)) {
+    int err;
 
-  js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
+    js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
-  finalizer->data = reference;
-  finalizer->finalize_cb = js__on_reference_finalize;
-  finalizer->finalize_hint = NULL;
+    finalizer->data = reference;
+    finalizer->finalize_cb = js__on_reference_finalize;
+    finalizer->finalize_hint = NULL;
 
-  JSValue external = JS_NewObjectClass(env->context, env->classes.external);
+    reference->symbol = JS_NewSymbol(env->context, "__native_reference", false);
 
-  JS_SetOpaque(external, finalizer);
+    JSValue external = JS_NewObjectClass(env->context, env->classes.external);
 
-  JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
+    JS_SetOpaque(external, finalizer);
 
-  err = JS_DefinePropertyValue(env->context, reference->value, atom, external, 0);
-  assert(err >= 0);
+    JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
 
-  JS_FreeAtom(env->context, atom);
+    err = JS_DefinePropertyValue(env->context, reference->value, atom, external, 0);
+    assert(err >= 0);
 
-  JS_FreeValue(env->context, reference->value);
+    JS_FreeAtom(env->context, atom);
+
+    JS_FreeValue(env->context, reference->value);
+  }
 }
 
 static inline void
 js__clear_weak_reference(js_env_t *env, js_ref_t *reference) {
   if (reference->finalized) return;
 
-  int err;
+  if (JS_IsObject(reference->value)) {
+    int err;
 
-  JS_DupValue(env->context, reference->value);
+    JS_DupValue(env->context, reference->value);
 
-  JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
+    JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
 
-  JSValue external = JS_GetProperty(env->context, reference->value, atom);
+    JSValue external = JS_GetProperty(env->context, reference->value, atom);
 
-  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, env->classes.external);
+    js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, env->classes.external);
 
-  JS_FreeValue(env->context, external);
+    JS_FreeValue(env->context, external);
 
-  finalizer->finalize_cb = NULL;
+    finalizer->finalize_cb = NULL;
 
-  err = JS_DeleteProperty(env->context, reference->value, atom, 0);
-  assert(err >= 0);
+    err = JS_DeleteProperty(env->context, reference->value, atom, 0);
+    assert(err >= 0);
 
-  JS_FreeAtom(env->context, atom);
+    JS_FreeAtom(env->context, atom);
+
+    JS_FreeValue(env->context, reference->symbol);
+
+    reference->symbol = JS_NULL;
+  }
 }
 
 int
@@ -1423,24 +1437,10 @@ js_create_reference(js_env_t *env, js_value_t *value, uint32_t count, js_ref_t *
 
   reference->value = JS_DupValue(env->context, value->value);
   reference->count = count;
+  reference->symbol = JS_NULL;
   reference->finalized = false;
 
-  if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Symbol");
-
-    JSValue description = JS_NewString(env->context, "__native_reference");
-
-    reference->symbol = JS_Call(env->context, constructor, global, 1, &description);
-
-    JS_FreeValue(env->context, description);
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-
-    if (reference->count == 0) js__set_weak_reference(env, reference);
-  } else {
-    reference->symbol = JS_NULL;
-  }
+  if (reference->count == 0) js__set_weak_reference(env, reference);
 
   *result = reference;
 
@@ -1451,14 +1451,9 @@ int
 js_delete_reference(js_env_t *env, js_ref_t *reference) {
   // Allow continuing even with a pending exception
 
-  if (reference->count == 0) {
-    if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
-      js__clear_weak_reference(env, reference);
-    }
-  }
+  if (reference->count == 0) js__clear_weak_reference(env, reference);
 
   JS_FreeValue(env->context, reference->value);
-  JS_FreeValue(env->context, reference->symbol);
 
   free(reference);
 
@@ -1471,11 +1466,7 @@ js_reference_ref(js_env_t *env, js_ref_t *reference, uint32_t *result) {
 
   reference->count++;
 
-  if (reference->count == 1) {
-    if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
-      js__clear_weak_reference(env, reference);
-    }
-  }
+  if (reference->count == 1) js__clear_weak_reference(env, reference);
 
   if (result) *result = reference->count;
 
@@ -1489,11 +1480,7 @@ js_reference_unref(js_env_t *env, js_ref_t *reference, uint32_t *result) {
   if (reference->count > 0) {
     reference->count--;
 
-    if (reference->count == 0) {
-      if (JS_IsObject(reference->value) || JS_IsFunction(env->context, reference->value)) {
-        js__set_weak_reference(env, reference);
-      }
-    }
+    if (reference->count == 0) js__set_weak_reference(env, reference);
   }
 
   if (result) *result = reference->count;
