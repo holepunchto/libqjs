@@ -2,6 +2,7 @@
 #include <intrusive.h>
 #include <intrusive/list.h>
 #include <js.h>
+#include <limits.h>
 #include <math.h>
 #include <quickjs.h>
 #include <stdarg.h>
@@ -272,6 +273,14 @@ js_get_platform_identifier(js_platform_t *platform, const char **result) {
 int
 js_get_platform_version(js_platform_t *platform, const char **result) {
   *result = JS_GetVersion();
+
+  return 0;
+}
+
+int
+js_get_platform_limits(js_platform_t *platform, js_platform_limits_t *result) {
+  result->arraybuffer_length = INT32_MAX;
+  result->string_length = 0x3fffffff;
 
   return 0;
 }
