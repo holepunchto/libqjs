@@ -4426,6 +4426,18 @@ err:
 }
 
 int
+js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collection_mode_t mode, js_property_filter_t property_filter, js_index_filter_t index_filter, js_key_conversion_mode_t key_conversion, js_value_t **result) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  err = js_throw_error(env, NULL, "Unsupported operation");
+  assert(err == 0);
+
+  return js__error(env);
+}
+
+int
 js_get_property(js_env_t *env, js_value_t *object, js_value_t *key, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
