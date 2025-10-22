@@ -105,10 +105,13 @@ list(APPEND tests
   define-class-with-symbol-property
   define-class-with-value
   dynamic-import
+  dynamic-import-with-promise
   dynamic-import-without-handler
   fatal-exception
   get-arraybuffer-info
   get-dataview-info
+  get-error-location
+  get-heap-space-statistics
   get-platform-identifier
   get-platform-limits
   get-platform-version
@@ -197,6 +200,13 @@ list(APPEND skipped_tests
   inspector-pause
 
   # Not supported
+  get-error-location
+
+  # Not supported
+  dynamic-import
+  dynamic-import-with-promise
+
+  # Not supported
   wasm
   wasm-async
   wasm-async-io
@@ -209,7 +219,7 @@ list(APPEND skipped_tests
   create-threadsafe-function-with-callback
   create-threadsafe-function-with-context
   create-threadsafe-function-with-finalizer
-  
+
   # Not implemented
   call-function-in-context
   run-module-in-context

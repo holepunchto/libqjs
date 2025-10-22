@@ -1,16 +1,15 @@
-cmake_minimum_required(VERSION 3.31)
+cmake_minimum_required(VERSION 4.0)
 
 find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
-
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 project(js C)
 
 add_library(js OBJECT)
 
+fetch_package("github:quickjs-ng/quickjs@0.10.1")
+
 fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
 fetch_package("github:holepunchto/libintrusive")
-fetch_package("github:quickjs-ng/quickjs@0.10.1")
 
 set_target_properties(
   js
