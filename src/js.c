@@ -202,7 +202,7 @@ struct js_callback_info_s {
 struct js_arraybuffer_header_s {
   atomic_int references;
   size_t len;
-  uint8_t data[];
+  uint8_t *data;
 };
 
 struct js_arraybuffer_backing_store_s {
@@ -607,13 +607,13 @@ js__on_check(uv_check_t *handle) {
 }
 
 static void *
-js__on_calloc(void *opaque, size_t count, size_t size) {
-  return calloc(count, size);
+js__on_calloc(void *opaque, size_t count, size_t len) {
+  return calloc(count, len);
 }
 
 static void *
-js__on_malloc(void *opaque, size_t size) {
-  return malloc(size);
+js__on_malloc(void *opaque, size_t len) {
+  return malloc(len);
 }
 
 static void
@@ -622,8 +622,8 @@ js__on_free(void *opaque, void *ptr) {
 }
 
 static void *
-js__on_realloc(void *opaque, void *ptr, size_t size) {
-  return realloc(ptr, size);
+js__on_realloc(void *opaque, void *ptr, size_t len) {
+  return realloc(ptr, len);
 }
 
 static size_t
@@ -632,11 +632,13 @@ js__on_usable_size(const void *ptr) {
 }
 
 static void *
-js__on_shared_malloc(void *opaque, size_t size) {
-  js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t) + size);
+js__on_shared_malloc(void *opaque, size_t len) {
+  js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t) + len);
 
-  header->references = 1;
-  header->len = size;
+  header->len = len;
+  header->data = (uint8_t *) header + sizeof(*header);
+
+  atomic_init(&header->references, 1);
 
   return header->data;
 }
@@ -645,7 +647,7 @@ static void
 js__on_shared_free(void *opaque, void *ptr) {
   js_arraybuffer_header_t *header = (js_arraybuffer_header_t *) ((char *) ptr - sizeof(js_arraybuffer_header_t));
 
-  if (--header->references == 0) {
+  if (atomic_fetch_sub_explicit(&header->references, 1, memory_order_acq_rel) == 1) {
     free(header);
   }
 }
@@ -654,7 +656,7 @@ static void
 js__on_shared_dup(void *opaque, void *ptr) {
   js_arraybuffer_header_t *header = (js_arraybuffer_header_t *) ((char *) ptr - sizeof(js_arraybuffer_header_t));
 
-  header->references++;
+  atomic_fetch_add_explicit(&header->references, 1, memory_order_acq_rel);
 }
 
 static void
@@ -2384,6 +2386,16 @@ js_create_symbol(js_env_t *env, js_value_t *description, js_value_t **result) {
 }
 
 int
+js_symbol_for(js_env_t *env, const char *description, size_t len, js_value_t **result) {
+  int err;
+
+  err = js_throw_error(env, NULL, "Unsupported operation");
+  assert(err == 0);
+
+  return js__error(env);
+}
+
+int
 js_create_object(js_env_t *env, js_value_t **result) {
   // Allow continuing even with a pending exception
 
@@ -2798,6 +2810,35 @@ js_create_syntax_error(js_env_t *env, js_value_t *code, js_value_t *message, js_
 }
 
 int
+js_create_reference_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "ReferenceError");
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  JSValue arg = message->value;
+
+  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+
+  if (code) {
+    JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
+  }
+
+  wrapper->value = error;
+
+  *result = wrapper;
+
+  js__attach_to_handle_scope(env, env->scope, wrapper);
+
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  return 0;
+}
+
+int
 js_get_error_location(js_env_t *env, js_value_t *error, js_error_location_t *result) {
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -3092,16 +3133,61 @@ js_create_sharedarraybuffer(js_env_t *env, size_t len, void **data, js_value_t *
 
   js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t) + len);
 
+  header->len = len;
+  header->data = (uint8_t *) header + sizeof(*header);
+
+  atomic_init(&header->references, 0);
+
   memset(header->data, 0, len);
 
-  header->references = 0;
-  header->len = len;
-
-  if (data) {
-    *data = header->data;
-  }
+  if (data) *data = header->data;
 
   JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, header->data, header->len, NULL, NULL, true);
+
+  js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+  wrapper->value = sharedarraybuffer;
+
+  *result = wrapper;
+
+  js__attach_to_handle_scope(env, env->scope, wrapper);
+
+  return 0;
+}
+
+static void
+js__on_external_sharedarraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) {
+  if (ptr == NULL) return;
+
+  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
+
+  js_finalizer_t *finalizer = (js_finalizer_t *) opaque;
+
+  if (finalizer->finalize_cb) {
+    finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
+  }
+
+  free(finalizer);
+}
+
+int
+js_create_external_sharedarraybuffer(js_env_t *env, void *data, size_t len, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
+
+  finalizer->data = data;
+  finalizer->finalize_cb = finalize_cb;
+  finalizer->finalize_hint = finalize_hint;
+
+  js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t));
+
+  header->len = len;
+  header->data = data;
+
+  atomic_init(&header->references, 0);
+
+  JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, header->data, header->len, js__on_external_sharedarraybuffer_finalize, (void *) finalizer, true);
 
   js_value_t *wrapper = malloc(sizeof(js_value_t));
 
@@ -3145,12 +3231,12 @@ js_create_unsafe_sharedarraybuffer(js_env_t *env, size_t len, void **data, js_va
 
   js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t) + len);
 
-  header->references = 0;
   header->len = len;
+  header->data = (uint8_t *) header + sizeof(*header);
 
-  if (data) {
-    *data = header->data;
-  }
+  atomic_init(&header->references, 0);
+
+  if (data) *data = header->data;
 
   JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, header->data, header->len, NULL, NULL, true);
 
@@ -5679,6 +5765,64 @@ js_throw_syntax_errorf(js_env_t *env, const char *code, const char *message, ...
   va_start(args, message);
 
   err = js_throw_syntax_verrorf(env, code, message, args);
+
+  va_end(args);
+
+  return err;
+}
+
+int
+js_throw_reference_error(js_env_t *env, const char *code, const char *message) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  JSValue global = JS_GetGlobalObject(env->context);
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "ReferenceError");
+
+  JSValue arg = JS_NewString(env->context, message);
+
+  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+
+  if (code) {
+    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+  }
+
+  JS_FreeValue(env->context, arg);
+  JS_FreeValue(env->context, constructor);
+  JS_FreeValue(env->context, global);
+
+  JS_Throw(env->context, error);
+
+  return 0;
+}
+
+int
+js_throw_reference_verrorf(js_env_t *env, const char *code, const char *message, va_list args) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  size_t len;
+  char *formatted;
+  err = js__vformat(&formatted, &len, message, args);
+  assert(err == 0);
+
+  err = js_throw_reference_error(env, code, formatted);
+
+  free(formatted);
+
+  return err;
+}
+
+int
+js_throw_reference_errorf(js_env_t *env, const char *code, const char *message, ...) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  va_list args;
+  va_start(args, message);
+
+  err = js_throw_reference_verrorf(env, code, message, args);
 
   va_end(args);
 
