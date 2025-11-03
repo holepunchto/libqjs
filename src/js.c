@@ -3436,7 +3436,7 @@ js_typeof(js_env_t *env, js_value_t *value, js_value_type_t *result) {
 
   if (JS_IsNumber(value->value)) {
     *result = js_number;
-  } else if (JS_IsBigInt(env->context, value->value)) {
+  } else if (JS_IsBigInt(value->value)) {
     *result = js_bigint;
   } else if (JS_IsString(value->value)) {
     *result = js_string;
@@ -3662,7 +3662,7 @@ int
 js_is_bigint(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsBigInt(env->context, value->value);
+  *result = JS_IsBigInt(value->value);
 
   return 0;
 }
@@ -3689,7 +3689,7 @@ int
 js_is_error(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsError(env->context, value->value);
+  *result = JS_IsError(value->value);
 
   return 0;
 }
@@ -3734,17 +3734,7 @@ int
 js_is_set(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Set");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_IsSet(value->value);
 
   return 0;
 }
@@ -3762,17 +3752,7 @@ int
 js_is_weak_map(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakMap");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_IsWeakMap(value->value);
 
   return 0;
 }
@@ -3781,17 +3761,7 @@ int
 js_is_weak_set(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakSet");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_IsWeakSet(value->value);
 
   return 0;
 }
@@ -3800,17 +3770,7 @@ int
 js_is_weak_ref(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "WeakRef");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_IsWeakRef(value->value);
 
   return 0;
 }
@@ -4133,17 +4093,7 @@ int
 js_is_dataview(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "DataView");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_IsDataView(value->value);
 
   return 0;
 }
