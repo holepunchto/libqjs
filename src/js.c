@@ -243,7 +243,7 @@ struct js_threadsafe_function_s {
   js_threadsafe_function_cb cb;
 };
 
-static const char *js_platform_identifier = "quickjs";
+static const char *js__platform_identifier = "quickjs";
 
 int
 js_create_platform(uv_loop_t *loop, const js_platform_options_t *options, js_platform_t **result) {
@@ -266,7 +266,7 @@ js_destroy_platform(js_platform_t *platform) {
 
 int
 js_get_platform_identifier(js_platform_t *platform, const char **result) {
-  *result = js_platform_identifier;
+  *result = js__platform_identifier;
 
   return 0;
 }
@@ -296,7 +296,7 @@ js_get_platform_loop(js_platform_t *platform, uv_loop_t **result) {
 static void
 js__on_external_finalize(JSRuntime *runtime, JSValue value);
 
-static JSClassDef js_external_class = {
+static JSClassDef js__external_class = {
   .class_name = "External",
   .finalizer = js__on_external_finalize,
 };
@@ -304,7 +304,7 @@ static JSClassDef js_external_class = {
 static void
 js__on_finalizer_finalize(JSRuntime *runtime, JSValue value);
 
-static JSClassDef js_finalizer_class = {
+static JSClassDef js__finalizer_class = {
   .class_name = "Finalizer",
   .finalizer = js__on_finalizer_finalize,
 };
@@ -312,7 +312,7 @@ static JSClassDef js_finalizer_class = {
 static void
 js__on_type_tag_finalize(JSRuntime *runtime, JSValue value);
 
-static JSClassDef js_type_tag_class = {
+static JSClassDef js__type_tag_class = {
   .class_name = "TypeTag",
   .finalizer = js__on_type_tag_finalize,
 };
@@ -320,7 +320,7 @@ static JSClassDef js_type_tag_class = {
 static void
 js__on_function_finalize(JSRuntime *runtime, JSValue value);
 
-static JSClassDef js_function_class = {
+static JSClassDef js__function_class = {
   .class_name = "Function",
   .finalizer = js__on_function_finalize,
 };
@@ -328,7 +328,7 @@ static JSClassDef js_function_class = {
 static void
 js__on_constructor_finalize(JSRuntime *runtime, JSValue value);
 
-static JSClassDef js_constructor_class = {
+static JSClassDef js__constructor_class = {
   .class_name = "Constructor",
   .finalizer = js__on_constructor_finalize,
 };
@@ -348,7 +348,7 @@ js__on_delegate_set_property(JSContext *context, JSValueConst object, JSAtom pro
 static void
 js__on_delegate_finalize(JSRuntime *runtime, JSValue value);
 
-static JSClassDef js_delegate_class = {
+static JSClassDef js__delegate_class = {
   .class_name = "Delegate",
   .finalizer = js__on_delegate_finalize,
   .exotic = &(JSClassExoticMethods) {
@@ -786,27 +786,27 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   JS_SetContextOpaque(env->context, env);
 
   JS_NewClassID(runtime, &env->classes.external);
-  err = JS_NewClass(runtime, env->classes.external, &js_external_class);
+  err = JS_NewClass(runtime, env->classes.external, &js__external_class);
   assert(err == 0);
 
   JS_NewClassID(runtime, &env->classes.finalizer);
-  err = JS_NewClass(runtime, env->classes.finalizer, &js_finalizer_class);
+  err = JS_NewClass(runtime, env->classes.finalizer, &js__finalizer_class);
   assert(err == 0);
 
   JS_NewClassID(runtime, &env->classes.type_tag);
-  err = JS_NewClass(runtime, env->classes.type_tag, &js_type_tag_class);
+  err = JS_NewClass(runtime, env->classes.type_tag, &js__type_tag_class);
   assert(err == 0);
 
   JS_NewClassID(runtime, &env->classes.function);
-  err = JS_NewClass(runtime, env->classes.function, &js_function_class);
+  err = JS_NewClass(runtime, env->classes.function, &js__function_class);
   assert(err == 0);
 
   JS_NewClassID(runtime, &env->classes.constructor);
-  err = JS_NewClass(runtime, env->classes.constructor, &js_constructor_class);
+  err = JS_NewClass(runtime, env->classes.constructor, &js__constructor_class);
   assert(err == 0);
 
   JS_NewClassID(runtime, &env->classes.delegate);
-  err = JS_NewClass(runtime, env->classes.delegate, &js_delegate_class);
+  err = JS_NewClass(runtime, env->classes.delegate, &js__delegate_class);
   assert(err == 0);
 
   err = uv_prepare_init(loop, &env->prepare);
@@ -1874,7 +1874,7 @@ js__on_delegate_get_own_property_names(JSContext *context, JSPropertyEnum **ppro
     err = js_get_array_length(env, result, &len);
     assert(err == 0);
 
-    JSPropertyEnum *properties = js_mallocz(env->context, sizeof(JSPropertyEnum) * len);
+    JSPropertyEnum *properties = calloc(len, sizeof(JSPropertyEnum));
 
     for (uint32_t i = 0; i < len; i++) {
       js_value_t *value;
@@ -3797,6 +3797,7 @@ js_is_typedarray(js_env_t *env, js_value_t *value, bool *result) {
     V("Uint16Array");
     V("Int32Array");
     V("Uint32Array");
+    V("Float16Array");
     V("Float32Array");
     V("Float64Array");
     V("BigInt64Array");
@@ -3949,7 +3950,19 @@ js_is_uint32array(js_env_t *env, js_value_t *value, bool *result) {
 
 int
 js_is_float16array(js_env_t *env, js_value_t *value, bool *result) {
-  *result = false;
+  // Allow continuing even with a pending exception
+
+  if (JS_IsObject(value->value)) {
+    JSValue global = JS_GetGlobalObject(env->context);
+    JSValue constructor = JS_GetPropertyStr(env->context, global, "Float16Array");
+
+    *result = JS_IsInstanceOf(env->context, value->value, constructor);
+
+    JS_FreeValue(env->context, constructor);
+    JS_FreeValue(env->context, global);
+  } else {
+    *result = false;
+  }
 
   return 0;
 }
@@ -5051,6 +5064,7 @@ js_get_typedarray_info(js_env_t *env, js_value_t *typedarray, js_typedarray_type
     V("Uint16Array", js_uint16array);
     V("Int32Array", js_int32array);
     V("Uint32Array", js_uint32array);
+    V("Float16Array", js_float16array);
     V("Float32Array", js_float32array);
     V("Float64Array", js_float64array);
     V("BigInt64Array", js_bigint64array);
@@ -5416,8 +5430,8 @@ js_throw(js_env_t *env, js_value_t *error) {
   return 0;
 }
 
-int
-js_vformat(char **result, size_t *size, const char *message, va_list args) {
+static inline int
+js__vformat(char **result, size_t *size, const char *message, va_list args) {
   va_list args_copy;
   va_copy(args_copy, args);
 
@@ -5467,11 +5481,14 @@ int
 js_throw_verrorf(js_env_t *env, const char *code, const char *message, va_list args) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   size_t len;
   char *formatted;
-  js_vformat(&formatted, &len, message, args);
+  err = js__vformat(&formatted, &len, message, args);
+  assert(err == 0);
 
-  int err = js_throw_error(env, code, formatted);
+  err = js_throw_error(env, code, formatted);
 
   free(formatted);
 
@@ -5482,10 +5499,12 @@ int
 js_throw_errorf(js_env_t *env, const char *code, const char *message, ...) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   va_list args;
   va_start(args, message);
 
-  int err = js_throw_verrorf(env, code, message, args);
+  err = js_throw_verrorf(env, code, message, args);
 
   va_end(args);
 
@@ -5520,11 +5539,14 @@ int
 js_throw_type_verrorf(js_env_t *env, const char *code, const char *message, va_list args) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   size_t len;
   char *formatted;
-  js_vformat(&formatted, &len, message, args);
+  err = js__vformat(&formatted, &len, message, args);
+  assert(err == 0);
 
-  int err = js_throw_type_error(env, code, formatted);
+  err = js_throw_type_error(env, code, formatted);
 
   free(formatted);
 
@@ -5535,10 +5557,12 @@ int
 js_throw_type_errorf(js_env_t *env, const char *code, const char *message, ...) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   va_list args;
   va_start(args, message);
 
-  int err = js_throw_type_verrorf(env, code, message, args);
+  err = js_throw_type_verrorf(env, code, message, args);
 
   va_end(args);
 
@@ -5573,11 +5597,14 @@ int
 js_throw_range_verrorf(js_env_t *env, const char *code, const char *message, va_list args) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   size_t len;
   char *formatted;
-  js_vformat(&formatted, &len, message, args);
+  err = js__vformat(&formatted, &len, message, args);
+  assert(err == 0);
 
-  int err = js_throw_range_error(env, code, formatted);
+  err = js_throw_range_error(env, code, formatted);
 
   free(formatted);
 
@@ -5588,10 +5615,12 @@ int
 js_throw_range_errorf(js_env_t *env, const char *code, const char *message, ...) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   va_list args;
   va_start(args, message);
 
-  int err = js_throw_range_verrorf(env, code, message, args);
+  err = js_throw_range_verrorf(env, code, message, args);
 
   va_end(args);
 
@@ -5626,11 +5655,14 @@ int
 js_throw_syntax_verrorf(js_env_t *env, const char *code, const char *message, va_list args) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   size_t len;
   char *formatted;
-  js_vformat(&formatted, &len, message, args);
+  err = js__vformat(&formatted, &len, message, args);
+  assert(err == 0);
 
-  int err = js_throw_syntax_error(env, code, formatted);
+  err = js_throw_syntax_error(env, code, formatted);
 
   free(formatted);
 
@@ -5641,10 +5673,12 @@ int
 js_throw_syntax_errorf(js_env_t *env, const char *code, const char *message, ...) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   va_list args;
   va_start(args, message);
 
-  int err = js_throw_syntax_verrorf(env, code, message, args);
+  err = js_throw_syntax_verrorf(env, code, message, args);
 
   va_end(args);
 
