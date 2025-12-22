@@ -4506,8 +4506,125 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
 
   int err;
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  if (mode != js_key_own_only) {
+    err = js_throw_error(env, NULL, "Unsupported operation");
+    assert(err == 0);
+    return js__error(env);
+  }
+
+  int flags = JS_GPN_SET_ENUM;
+
+  if (property_filter & js_property_only_enumerable) {
+    flags |= JS_GPN_ENUM_ONLY;
+  }
+  if (!(property_filter & js_property_skip_strings)) {
+    flags |= JS_GPN_STRING_MASK;
+  }
+  if (!(property_filter & js_property_skip_symbols)) {
+    flags |= JS_GPN_SYMBOL_MASK;
+  }
+
+  JSPropertyEnum *properties;
+  uint32_t len;
+
+  env->depth++;
+
+  err = JS_GetOwnPropertyNames(env->context, &properties, &len, object->value, flags);
+
+  if (env->depth == 1) js__on_run_microtasks(env);
+
+  env->depth--;
+
+  if (err < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__on_uncaught_exception(env->context, error);
+    }
+
+    return js__error(env);
+  }
+
+  JSValue array = JS_NewArray(env->context);
+  uint32_t j = 0;
+
+  for (uint32_t i = 0; i < len; i++) {
+    JSAtom atom = properties[i].atom;
+    JSValue value = JS_AtomToValue(env->context, atom);
+
+    if (JS_IsException(value)) {
+      goto err;
+    }
+
+    if (index_filter == js_index_skip_indices && JS_IsNumber(value)) {
+      JS_FreeValue(env->context, value);
+      continue;
+    }
+
+    JSPropertyDescriptor descriptor;
+
+    err = JS_GetOwnProperty(env->context, &descriptor, object->value, atom);
+
+    if (err < 0) {
+      JS_FreeValue(env->context, value);
+      goto err;
+    } else if (!err) {
+      JS_FreeValue(env->context, value);
+      continue;
+    }
+
+    bool include = property_filter == js_property_all_properties;
+
+    if (property_filter & js_property_only_writable) {
+      include = include || descriptor.flags & JS_PROP_WRITABLE;
+    }
+    if (property_filter & js_property_only_enumerable) {
+      include = include || descriptor.flags & JS_PROP_ENUMERABLE;
+    }
+    if (property_filter & js_property_only_configurable) {
+      include = include || descriptor.flags & JS_PROP_CONFIGURABLE;
+    }
+
+    if (key_conversion == js_key_convert_to_string && JS_IsNumber(value)) {
+      JSValue strValue = JS_ToString(env->context, value);
+
+      if (JS_IsException(strValue)) {
+        err = -1;
+        goto skip;
+      }
+
+      JS_FreeValue(env->context, value);
+      value = strValue;
+    }
+
+    if (include) err = JS_SetPropertyUint32(env->context, array, j++, value);
+
+skip:
+    JS_FreeValue(env->context, descriptor.getter);
+    JS_FreeValue(env->context, descriptor.setter);
+    JS_FreeValue(env->context, descriptor.value);
+
+    if (err < 0) goto err;
+  }
+
+  JS_FreePropertyEnum(env->context, properties, len);
+
+  if (result == NULL) JS_FreeValue(env->context, array);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = array;
+
+    *result = wrapper;
+
+    js__attach_to_handle_scope(env, env->scope, wrapper);
+  }
+
+  return 0;
+
+err:
+  JS_FreePropertyEnum(env->context, properties, len);
+  JS_FreeValue(env->context, array);
 
   return js__error(env);
 }
