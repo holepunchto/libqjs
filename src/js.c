@@ -4475,9 +4475,11 @@ js_get_property_names(js_env_t *env, js_value_t *object, js_value_t **result) {
   JSValue array = JS_NewArray(env->context);
 
   for (uint32_t i = 0; i < len; i++) {
-    err = JS_SetPropertyUint32(env->context, object->value, i, JS_AtomToValue(env->context, properties[i].atom));
+    err = JS_SetPropertyUint32(env->context, array, i, JS_AtomToValue(env->context, properties[i].atom));
     if (err < 0) goto err;
   }
+
+  JS_FreePropertyEnum(env->context, properties, len);
 
   if (result == NULL) JS_FreeValue(env->context, array);
   else {
@@ -4493,11 +4495,7 @@ js_get_property_names(js_env_t *env, js_value_t *object, js_value_t **result) {
   return 0;
 
 err:
-  for (uint32_t i = 0; i < len; i++) {
-    JS_FreeAtom(env->context, properties[i].atom);
-  }
-
-  free(properties);
+  JS_FreePropertyEnum(env->context, properties, len);
 
   return js__error(env);
 }
