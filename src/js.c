@@ -4414,9 +4414,9 @@ js_set_array_elements(js_env_t *env, js_value_t *array, const js_value_t *elemen
 
     if (env->depth == 1) js__on_run_microtasks(env);
 
-    env->depth--;
-
     if (success < 0) {
+      env->depth--;
+
       if (env->depth == 0) {
         JSValue error = JS_GetException(env->context);
 
