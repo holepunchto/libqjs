@@ -4412,11 +4412,11 @@ js_set_array_elements(js_env_t *env, js_value_t *array, const js_value_t *elemen
   for (uint32_t i = 0, n = len, j = offset; i < n; i++, j++) {
     int success = JS_SetPropertyUint32(env->context, array->value, j, JS_DupValue(env->context, elements[i]->value));
 
-    if (env->depth == 1) js__on_run_microtasks(env);
-
-    env->depth--;
-
     if (success < 0) {
+      if (env->depth == 1) js__on_run_microtasks(env);
+
+      env->depth--;
+
       if (env->depth == 0) {
         JSValue error = JS_GetException(env->context);
 
