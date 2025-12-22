@@ -4369,9 +4369,9 @@ js_get_array_elements(js_env_t *env, js_value_t *array, js_value_t **elements, s
   for (uint32_t i = 0, n = len, j = offset; i < n && j < m; i++, j++) {
     JSValue value = JS_GetPropertyUint32(env->context, array->value, j);
 
-    if (JS_IsException(value)) {
-      if (env->depth == 1) js__on_run_microtasks(env);
+    if (env->depth == 1) js__on_run_microtasks(env);
 
+    if (JS_IsException(value)) {
       env->depth--;
 
       if (env->depth == 0) {
@@ -4393,8 +4393,6 @@ js_get_array_elements(js_env_t *env, js_value_t *array, js_value_t **elements, s
 
     written++;
   }
-
-  if (env->depth == 1) js__on_run_microtasks(env);
 
   env->depth--;
 
@@ -4426,8 +4424,6 @@ js_set_array_elements(js_env_t *env, js_value_t *array, const js_value_t *elemen
       return js__error(env);
     }
   }
-
-  if (env->depth == 1) js__on_run_microtasks(env);
 
   env->depth--;
 
