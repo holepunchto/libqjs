@@ -4500,6 +4500,54 @@ err:
   return js__error(env);
 }
 
+static int
+js__atom_is_array_index(JSContext *context, JSAtom atom, uint32_t *index) {
+  JSValue key = JS_AtomToString(context, atom);
+
+  if (JS_IsException(key)) return -1;
+
+  size_t len;
+  const char *str = JS_ToCStringLen(context, &len, key);
+
+  if (str == NULL) {
+    JS_FreeValue(context, key);
+    return -1;
+  }
+
+  bool result = len > 0;
+  uint64_t value = 0;
+
+  for (size_t i = 0; i < len; i++) {
+    char c = str[i];
+
+    if (c < '0' || c > '9') {
+      result = false;
+      break;
+    }
+
+    if (i == 0 && c == '0' && len > 1) {
+      result = false;
+      break;
+    }
+
+    value = value * 10 + (c - '0');
+
+    if (value > UINT32_MAX) {
+      result = false;
+      break;
+    }
+  }
+
+  JS_FreeCString(context, str);
+  JS_FreeValue(context, key);
+
+  if (!result || value == UINT32_MAX) return false;
+
+  if (index) *index = (uint32_t) value;
+
+  return true;
+}
+
 int
 js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collection_mode_t mode, js_property_filter_t property_filter, js_index_filter_t index_filter, js_key_conversion_mode_t key_conversion, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
@@ -4514,15 +4562,9 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
 
   int flags = JS_GPN_SET_ENUM;
 
-  if (property_filter & js_property_only_enumerable) {
-    flags |= JS_GPN_ENUM_ONLY;
-  }
-  if (!(property_filter & js_property_skip_strings)) {
-    flags |= JS_GPN_STRING_MASK;
-  }
-  if (!(property_filter & js_property_skip_symbols)) {
-    flags |= JS_GPN_SYMBOL_MASK;
-  }
+  if (property_filter & js_property_only_enumerable) flags |= JS_GPN_ENUM_ONLY;
+  if (!(property_filter & js_property_skip_strings)) flags |= JS_GPN_STRING_MASK;
+  if (!(property_filter & js_property_skip_symbols)) flags |= JS_GPN_SYMBOL_MASK;
 
   JSPropertyEnum *properties;
   uint32_t len;
@@ -4550,28 +4592,19 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
 
   for (uint32_t i = 0; i < len; i++) {
     JSAtom atom = properties[i].atom;
-    JSValue value = JS_AtomToValue(env->context, atom);
+    uint32_t index_value;
+    int index_result = js__atom_is_array_index(env->context, atom, &index_value);
 
-    if (JS_IsException(value)) {
-      goto err;
-    }
+    if (index_result < 0) goto err;
 
-    if (index_filter == js_index_skip_indices && JS_IsNumber(value)) {
-      JS_FreeValue(env->context, value);
-      continue;
-    }
+    if (index_filter == js_index_skip_indices && index_result) continue;
 
     JSPropertyDescriptor descriptor;
 
     err = JS_GetOwnProperty(env->context, &descriptor, object->value, atom);
 
-    if (err < 0) {
-      JS_FreeValue(env->context, value);
-      goto err;
-    } else if (!err) {
-      JS_FreeValue(env->context, value);
-      continue;
-    }
+    if (err < 0) goto err;
+    else if (!err) continue;
 
     bool include = property_filter == js_property_all_properties;
 
@@ -4585,19 +4618,20 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
       include = include || descriptor.flags & JS_PROP_CONFIGURABLE;
     }
 
-    if (key_conversion == js_key_convert_to_string && JS_IsNumber(value)) {
-      JSValue strValue = JS_ToString(env->context, value);
+    JSValue value = JS_AtomToValue(env->context, atom);
 
-      if (JS_IsException(strValue)) {
-        err = -1;
-        goto skip;
-      }
+    if (JS_IsException(value)) {
+      err = -1;
+      goto skip;
+    }
 
+    if (key_conversion == js_key_keep_numbers && index_result) {
       JS_FreeValue(env->context, value);
-      value = strValue;
+      value = JS_NewUint32(env->context, index_value);
     }
 
     if (include) err = JS_SetPropertyUint32(env->context, array, j++, value);
+    else JS_FreeValue(env->context, value);
 
 skip:
     JS_FreeValue(env->context, descriptor.getter);
