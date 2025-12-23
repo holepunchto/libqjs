@@ -4500,14 +4500,166 @@ err:
   return js__error(env);
 }
 
+static int
+js__atom_is_array_index(JSContext *context, JSAtom atom, uint32_t *index) {
+  JSValue key = JS_AtomToString(context, atom);
+
+  if (JS_IsException(key)) return -1;
+
+  size_t len;
+  const char *str = JS_ToCStringLen(context, &len, key);
+
+  if (str == NULL) {
+    JS_FreeValue(context, key);
+    return -1;
+  }
+
+  bool result = len > 0;
+  uint64_t value = 0;
+
+  for (size_t i = 0; i < len; i++) {
+    char c = str[i];
+
+    if (c < '0' || c > '9') {
+      result = false;
+      break;
+    }
+
+    if (i == 0 && c == '0' && len > 1) {
+      result = false;
+      break;
+    }
+
+    value = value * 10 + (c - '0');
+
+    if (value > UINT32_MAX) {
+      result = false;
+      break;
+    }
+  }
+
+  JS_FreeCString(context, str);
+  JS_FreeValue(context, key);
+
+  if (!result || value == UINT32_MAX) return false;
+
+  if (index) *index = (uint32_t) value;
+
+  return true;
+}
+
 int
 js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collection_mode_t mode, js_property_filter_t property_filter, js_index_filter_t index_filter, js_key_conversion_mode_t key_conversion, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
   int err;
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  if (mode != js_key_own_only) {
+    err = js_throw_error(env, NULL, "Unsupported operation");
+    assert(err == 0);
+    return js__error(env);
+  }
+
+  int flags = JS_GPN_SET_ENUM;
+
+  if (property_filter & js_property_only_enumerable) flags |= JS_GPN_ENUM_ONLY;
+  if (!(property_filter & js_property_skip_strings)) flags |= JS_GPN_STRING_MASK;
+  if (!(property_filter & js_property_skip_symbols)) flags |= JS_GPN_SYMBOL_MASK;
+
+  JSPropertyEnum *properties;
+  uint32_t len;
+
+  env->depth++;
+
+  err = JS_GetOwnPropertyNames(env->context, &properties, &len, object->value, flags);
+
+  if (env->depth == 1) js__on_run_microtasks(env);
+
+  env->depth--;
+
+  if (err < 0) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__on_uncaught_exception(env->context, error);
+    }
+
+    return js__error(env);
+  }
+
+  JSValue array = JS_NewArray(env->context);
+  uint32_t j = 0;
+
+  for (uint32_t i = 0; i < len; i++) {
+    JSAtom atom = properties[i].atom;
+    uint32_t index_value;
+    int index_result = js__atom_is_array_index(env->context, atom, &index_value);
+
+    if (index_result < 0) goto err;
+
+    if (index_filter == js_index_skip_indices && index_result) continue;
+
+    JSPropertyDescriptor descriptor;
+    err = JS_GetOwnProperty(env->context, &descriptor, object->value, atom);
+
+    if (err < 0) goto err;
+    else if (!err) continue;
+
+    bool include = property_filter == js_property_all_properties;
+
+    if (property_filter & js_property_only_writable) {
+      include = include || descriptor.flags & JS_PROP_WRITABLE;
+    }
+    if (property_filter & js_property_only_enumerable) {
+      include = include || descriptor.flags & JS_PROP_ENUMERABLE;
+    }
+    if (property_filter & js_property_only_configurable) {
+      include = include || descriptor.flags & JS_PROP_CONFIGURABLE;
+    }
+
+    JS_FreeValue(env->context, descriptor.getter);
+    JS_FreeValue(env->context, descriptor.setter);
+    JS_FreeValue(env->context, descriptor.value);
+
+    JSValue value = JS_AtomToValue(env->context, atom);
+
+    if (JS_IsException(value)) goto err;
+
+    if (include) {
+      if (key_conversion == js_key_keep_numbers && index_result) {
+        JS_FreeValue(env->context, value);
+        value = JS_NewUint32(env->context, index_value);
+      }
+
+      err = JS_SetPropertyUint32(env->context, array, j++, value);
+
+      if (err < 0) {
+        JS_FreeValue(env->context, value);
+        goto err;
+      }
+    } else {
+      JS_FreeValue(env->context, value);
+    }
+  }
+
+  JS_FreePropertyEnum(env->context, properties, len);
+
+  if (result == NULL) JS_FreeValue(env->context, array);
+  else {
+    js_value_t *wrapper = malloc(sizeof(js_value_t));
+
+    wrapper->value = array;
+
+    *result = wrapper;
+
+    js__attach_to_handle_scope(env, env->scope, wrapper);
+  }
+
+  return 0;
+
+err:
+  JS_FreePropertyEnum(env->context, properties, len);
+  JS_FreeValue(env->context, array);
 
   return js__error(env);
 }
