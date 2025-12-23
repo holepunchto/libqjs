@@ -4600,7 +4600,6 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
     if (index_filter == js_index_skip_indices && index_result) continue;
 
     JSPropertyDescriptor descriptor;
-
     err = JS_GetOwnProperty(env->context, &descriptor, object->value, atom);
 
     if (err < 0) goto err;
@@ -4618,27 +4617,29 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
       include = include || descriptor.flags & JS_PROP_CONFIGURABLE;
     }
 
-    JSValue value = JS_AtomToValue(env->context, atom);
-
-    if (JS_IsException(value)) {
-      err = -1;
-      goto skip;
-    }
-
-    if (key_conversion == js_key_keep_numbers && index_result) {
-      JS_FreeValue(env->context, value);
-      value = JS_NewUint32(env->context, index_value);
-    }
-
-    if (include) err = JS_SetPropertyUint32(env->context, array, j++, value);
-    else JS_FreeValue(env->context, value);
-
-skip:
     JS_FreeValue(env->context, descriptor.getter);
     JS_FreeValue(env->context, descriptor.setter);
     JS_FreeValue(env->context, descriptor.value);
 
-    if (err < 0) goto err;
+    JSValue value = JS_AtomToValue(env->context, atom);
+
+    if (JS_IsException(value)) goto err;
+
+    if (include) {
+      if (key_conversion == js_key_keep_numbers && index_result) {
+        JS_FreeValue(env->context, value);
+        value = JS_NewUint32(env->context, index_value);
+      }
+
+      err = JS_SetPropertyUint32(env->context, array, j++, value);
+
+      if (err < 0) {
+        JS_FreeValue(env->context, value);
+        goto err;
+      }
+    } else {
+      JS_FreeValue(env->context, value);
+    }
   }
 
   JS_FreePropertyEnum(env->context, properties, len);
