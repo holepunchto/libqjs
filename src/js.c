@@ -508,7 +508,7 @@ js__on_promise_rejection(JSContext *context, JSValueConst promise, JSValueConst 
     js_promise_rejection_t *prev = NULL;
 
     while (next) {
-      if (JS_VALUE_GET_OBJ(next->promise) == JS_VALUE_GET_OBJ(promise)) {
+      if (JS_VALUE_GET_PTR(next->promise) == JS_VALUE_GET_PTR(promise)) {
         JS_FreeValue(context, next->promise);
         JS_FreeValue(context, next->reason);
 
@@ -2913,6 +2913,7 @@ js_get_promise_state(js_env_t *env, js_value_t *promise, js_promise_state_t *res
 
   switch (JS_PromiseState(env->context, promise->value)) {
   case JS_PROMISE_PENDING:
+  default:
     *result = js_promise_pending;
     break;
   case JS_PROMISE_FULFILLED:
