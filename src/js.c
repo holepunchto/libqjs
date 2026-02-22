@@ -231,6 +231,8 @@ struct js_threadsafe_queue_s {
   void **queue;
   size_t len;
   size_t capacity;
+  size_t head;
+  size_t tail;
   bool closed;
   uv_mutex_t lock;
 };
@@ -5484,54 +5486,341 @@ js_new_instance(js_env_t *env, js_value_t *constructor, size_t argc, js_value_t 
   return 0;
 }
 
-int
-js_create_threadsafe_function(js_env_t *env, js_value_t *function, size_t queue_limit, size_t initial_thread_count, js_finalize_cb finalize_cb, void *finalize_hint, void *context, js_threadsafe_function_cb cb, js_threadsafe_function_t **result) {
+static inline bool
+js__threadsafe_queue_push(js_threadsafe_queue_t *queue, void *data) {
+  uv_mutex_lock(&queue->lock);
+
+  if (queue->closed) {
+    uv_mutex_unlock(&queue->lock);
+
+    return false;
+  }
+
+  if (queue->len == queue->capacity) {
+    size_t capacity = queue->capacity ? queue->capacity << 1u : 16;
+
+    void **resized = realloc(queue->queue, capacity * sizeof(void *));
+
+    if (queue->head > 0) {
+      size_t head_len = queue->capacity - queue->head;
+
+      if (head_len > 0) {
+        memmove(&resized[capacity - head_len], &resized[queue->head], head_len * sizeof(void *));
+      }
+
+      queue->head = capacity - head_len;
+    }
+
+    queue->queue = resized;
+    queue->capacity = capacity;
+  }
+
+  queue->queue[queue->tail] = data;
+  queue->tail = (queue->tail + 1) & (queue->capacity - 1);
+  queue->len++;
+
+  uv_mutex_unlock(&queue->lock);
+
+  return true;
+}
+
+static inline bool
+js__threadsafe_queue_pop(js_threadsafe_queue_t *queue, void **result) {
+  uv_mutex_lock(&queue->lock);
+
+  if (queue->len == 0) {
+    uv_mutex_unlock(&queue->lock);
+
+    return false;
+  }
+
+  void *data = queue->queue[queue->head];
+
+  queue->head = (queue->head + 1) & (queue->capacity - 1);
+  queue->len--;
+
+  if (queue->capacity > 16 && queue->len <= queue->capacity / 4) {
+    size_t capacity = queue->capacity >> 1u;
+
+    void **resized = malloc(capacity * sizeof(void *));
+
+    for (size_t i = 0; i < queue->len; i++) {
+      resized[i] = queue->queue[(queue->head + i) & (queue->capacity - 1)];
+    }
+
+    free(queue->queue);
+
+    queue->queue = resized;
+    queue->capacity = capacity;
+    queue->head = 0;
+    queue->tail = queue->len;
+  }
+
+  uv_mutex_unlock(&queue->lock);
+
+  *result = data;
+
+  return true;
+}
+
+static inline void
+js__threadsafe_queue_close(js_threadsafe_queue_t *queue) {
+  uv_mutex_lock(&queue->lock);
+
+  queue->closed = true;
+
+  uv_mutex_unlock(&queue->lock);
+}
+
+static inline void
+js__threadsafe_function_finalize(js_threadsafe_function_t *function) {
+  js_env_t *env = function->env;
+
+  if (function->finalize_cb) {
+    function->finalize_cb(env, function->context, function->finalize_hint);
+  }
+
+  JS_FreeValue(env->context, function->function);
+
+  free(function);
+}
+
+static void
+js__on_threadsafe_function_close(uv_handle_t *handle) {
+  js_threadsafe_function_t *function = handle->data;
+
+  js__threadsafe_function_finalize(function);
+}
+
+static inline void
+js__threadsafe_function_close(js_threadsafe_function_t *function) {
+  uv_close((uv_handle_t *) &function->async, js__on_threadsafe_function_close);
+}
+
+static inline bool
+js__threadsafe_function_call(js_threadsafe_function_t *function) {
   int err;
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
+  js_env_t *env = function->env;
+
+  void *data;
+
+  if (js__threadsafe_queue_pop(&function->queue, &data)) {
+    js_handle_scope_t *scope;
+    err = js_open_handle_scope(env, &scope);
+    assert(err == 0);
+
+    if (function->cb) {
+      function->cb(env, &(js_value_t) {function->function}, function->context, data);
+    } else {
+      js_value_t *receiver;
+      err = js_get_undefined(env, &receiver);
+      assert(err == 0);
+
+      err = js_call_function(env, receiver, &(js_value_t) {function->function}, 0, NULL, NULL);
+      (void) err;
+    }
+
+    err = js_close_handle_scope(env, scope);
+    assert(err == 0);
+
+    return true;
+  }
+
+  if (atomic_load_explicit(&function->thread_count, memory_order_relaxed) == 0) {
+    js__threadsafe_function_close(function);
+  }
+
+  return false;
+}
+
+static inline void
+js__threadsafe_function_signal(js_threadsafe_function_t *function) {
+  int err;
+
+  int state = atomic_fetch_or_explicit(&function->state, js_threadsafe_function_pending, memory_order_acq_rel);
+
+  if (state & js_threadsafe_function_running) {
+    return;
+  }
+
+  err = uv_async_send(&function->async);
+  assert(err == 0);
+}
+
+static inline void
+js__threadsafe_function_dispatch(js_threadsafe_function_t *function) {
+  bool done = false;
+
+  int iterations = 1024;
+
+  while (!done && --iterations >= 0) {
+    atomic_store_explicit(&function->state, js_threadsafe_function_running, memory_order_release);
+
+    done = js__threadsafe_function_call(function) == false;
+
+    if (atomic_exchange_explicit(&function->state, js_threadsafe_function_idle, memory_order_acq_rel) != js_threadsafe_function_running) {
+      done = false;
+    }
+  }
+
+  if (!done) js__threadsafe_function_signal(function);
+}
+
+static void
+js__on_threadsafe_function_async(uv_async_t *handle) {
+  js_threadsafe_function_t *function = handle->data;
+
+  js__threadsafe_function_dispatch(function);
+}
+
+int
+js_create_threadsafe_function(js_env_t *env, js_value_t *function, size_t queue_limit, size_t initial_thread_count, js_finalize_cb finalize_cb, void *finalize_hint, void *context, js_threadsafe_function_cb cb, js_threadsafe_function_t **result) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  if (function == NULL && cb == NULL) {
+    err = js_throw_error(env, NULL, "Either a function or a callback must be provided");
+    assert(err == 0);
+
+    return js__error(env);
+  };
+
+  if (initial_thread_count == 0) {
+    err = js_throw_error(env, NULL, "Initial thread count must be greater than 0");
+    assert(err == 0);
+
+    return js__error(env);
+  }
+
+  js_threadsafe_function_t *threadsafe_function = malloc(sizeof(js_threadsafe_function_t));
+
+  threadsafe_function->env = env;
+  threadsafe_function->context = context;
+  threadsafe_function->finalize_cb = finalize_cb;
+  threadsafe_function->finalize_hint = finalize_hint;
+  threadsafe_function->cb = cb;
+
+  atomic_init(&threadsafe_function->state, js_threadsafe_function_idle);
+  atomic_init(&threadsafe_function->thread_count, initial_thread_count);
+
+  if (function) {
+    threadsafe_function->function = JS_DupValue(env->context, function->value);
+  } else {
+    threadsafe_function->function = JS_NULL;
+  }
+
+  err = uv_async_init(env->loop, &threadsafe_function->async, js__on_threadsafe_function_async);
   assert(err == 0);
 
-  return js__error(env);
+  threadsafe_function->async.data = threadsafe_function;
+
+  js_threadsafe_queue_t *queue = &threadsafe_function->queue;
+
+  queue->queue = NULL;
+  queue->len = 0;
+  queue->capacity = 0;
+  queue->head = 0;
+  queue->tail = 0;
+  queue->closed = false;
+
+  err = uv_mutex_init(&queue->lock);
+  assert(err == 0);
+
+  *result = threadsafe_function;
+
+  return 0;
 }
 
 int
 js_get_threadsafe_function_context(js_threadsafe_function_t *function, void **result) {
-  return -1;
+  // Allow continuing even with a pending exception
+
+  *result = function->context;
+
+  return 0;
 }
 
 int
 js_call_threadsafe_function(js_threadsafe_function_t *function, void *data, js_threadsafe_function_call_mode_t mode) {
+  if (atomic_load_explicit(&function->thread_count, memory_order_relaxed) == 0) return -1;
+
+  if (js__threadsafe_queue_push(&function->queue, data)) {
+    js__threadsafe_function_signal(function);
+
+    return 0;
+  }
+
   return -1;
 }
 
 int
 js_acquire_threadsafe_function(js_threadsafe_function_t *function) {
+  int thread_count = atomic_load_explicit(&function->thread_count, memory_order_relaxed);
+
+  while (thread_count != 0) {
+    if (
+      atomic_compare_exchange_weak_explicit(
+        &function->thread_count,
+        &thread_count,
+        thread_count + 1,
+        memory_order_acquire,
+        memory_order_relaxed
+      )
+    ) {
+      return 0;
+    }
+  }
+
   return -1;
 }
 
 int
 js_release_threadsafe_function(js_threadsafe_function_t *function, js_threadsafe_function_release_mode_t mode) {
+  int thread_count = atomic_load_explicit(&function->thread_count, memory_order_relaxed);
+
+  bool abort = mode == js_threadsafe_function_abort;
+
+  while (thread_count != 0) {
+    if (
+      atomic_compare_exchange_weak_explicit(
+        &function->thread_count,
+        &thread_count,
+        abort ? 0 : thread_count - 1,
+        memory_order_acquire,
+        memory_order_relaxed
+      )
+    ) {
+      if (abort || thread_count == 1) {
+        js__threadsafe_queue_close(&function->queue);
+
+        js__threadsafe_function_signal(function);
+      }
+
+      return 0;
+    }
+  }
+
   return -1;
 }
 
 int
 js_ref_threadsafe_function(js_env_t *env, js_threadsafe_function_t *function) {
-  int err;
+  // Allow continuing even with a pending exception
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  uv_ref((uv_handle_t *) &function->async);
 
-  return js__error(env);
+  return 0;
 }
 
 int
 js_unref_threadsafe_function(js_env_t *env, js_threadsafe_function_t *function) {
-  int err;
+  // Allow continuing even with a pending exception
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  uv_unref((uv_handle_t *) &function->async);
 
-  return js__error(env);
+  return 0;
 }
 
 int

@@ -211,14 +211,6 @@ list(APPEND skipped_tests
   wasm-async
   wasm-async-io
   wasm-async-io-multiple
-
-  # Not implemented
-  call-threadsafe-function-after-release
-  call-threadsafe-function-with-data
-  create-threadsafe-function
-  create-threadsafe-function-with-callback
-  create-threadsafe-function-with-context
-  create-threadsafe-function-with-finalizer
 )
 
 foreach(test IN LISTS tests)
