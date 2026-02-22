@@ -152,6 +152,11 @@ struct js_module_evaluator_s {
   js_module_evaluator_t *next;
 };
 
+struct js_context_s {
+  JSContext *context;
+  JSContext *previous;
+};
+
 struct js_ref_s {
   JSValue value;
   JSValue symbol;
@@ -1002,42 +1007,49 @@ js_escape_handle(js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t *
 
 int
 js_create_context(js_env_t *env, js_context_t **result) {
-  int err;
+  // Allow continuing even with a pending exception
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  js_context_t *context = malloc(sizeof(js_context_t));
 
-  return js__error(env);
+  context->context = JS_NewContext(env->runtime);
+  context->previous = NULL;
+
+  *result = context;
+
+  return 0;
 }
 
 int
 js_destroy_context(js_env_t *env, js_context_t *context) {
-  int err;
+  // Allow continuing even with a pending exception
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  JS_FreeContext(context->context);
 
-  return js__error(env);
+  free(context);
+
+  return 0;
 }
 
 int
 js_enter_context(js_env_t *env, js_context_t *context) {
-  int err;
+  // Allow continuing even with a pending exception
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  context->previous = env->context;
 
-  return js__error(env);
+  env->context = context->context;
+
+  return 0;
 }
 
 int
 js_exit_context(js_env_t *env, js_context_t *context) {
-  int err;
+  // Allow continuing even with a pending exception
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  env->context = context->previous;
 
-  return js__error(env);
+  context->previous = NULL;
+
+  return 0;
 }
 
 int
@@ -1110,7 +1122,7 @@ js_create_module(js_env_t *env, const char *name, size_t len, int offset, js_val
 
   js_module_t *module = malloc(sizeof(js_module_t));
 
-  module->context = env->context;
+  module->context = JS_DupContext(env->context);
   module->source = JS_DupValue(env->context, source->value);
   module->bytecode = JS_NULL;
   module->definition = NULL;
@@ -1161,7 +1173,7 @@ js_create_synthetic_module(js_env_t *env, const char *name, size_t len, js_value
 
   js_module_t *module = malloc(sizeof(js_module_t));
 
-  module->context = env->context;
+  module->context = JS_DupContext(env->context);
   module->source = JS_NULL;
   module->bytecode = JS_NULL;
   module->definition = JS_NewCModule(env->context, name, js__on_evaluate_module);
@@ -1205,6 +1217,8 @@ js_delete_module(js_env_t *env, js_module_t *module) {
 
   JS_FreeValue(env->context, module->source);
   JS_FreeValue(env->context, module->bytecode);
+
+  JS_FreeContext(module->context);
 
   free(module->name);
   free(module);

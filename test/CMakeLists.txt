@@ -219,11 +219,6 @@ list(APPEND skipped_tests
   create-threadsafe-function-with-callback
   create-threadsafe-function-with-context
   create-threadsafe-function-with-finalizer
-
-  # Not implemented
-  call-function-in-context
-  run-module-in-context
-  run-script-in-context
 )
 
 foreach(test IN LISTS tests)
