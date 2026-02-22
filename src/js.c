@@ -458,6 +458,12 @@ js__on_uncaught_exception(JSContext *context, JSValue error) {
 
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
+  if (JS_IsUncatchableError(error)) {
+    JS_FreeValue(env->context, error);
+
+    return;
+  }
+
   if (env->callbacks.uncaught_exception) {
     js_handle_scope_t *scope;
     err = js_open_handle_scope(env, &scope);
