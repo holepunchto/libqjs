@@ -4,9 +4,9 @@ find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 
 project(js C)
 
-add_library(js OBJECT)
-
 fetch_package("github:quickjs-ng/quickjs@0.12.1")
+
+add_library(js OBJECT)
 
 fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
 fetch_package("github:holepunchto/libintrusive")
