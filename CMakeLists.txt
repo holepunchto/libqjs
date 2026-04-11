@@ -4,7 +4,7 @@ find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 
 project(js C)
 
-fetch_package("github:quickjs-ng/quickjs@0.12.1")
+fetch_package("github:quickjs-ng/quickjs@0.14.0")
 
 add_library(js OBJECT)
 

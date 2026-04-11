@@ -3617,7 +3617,7 @@ int
 js_is_async_function(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = false;
+  *result = JS_IsAsyncFunction(value->value);
 
   return 0;
 }
