@@ -413,33 +413,8 @@ js__on_resolve_module(JSContext *context, const char *name, void *opaque) {
 
     definition = module->definition;
   } else {
-    if (env->callbacks.dynamic_import == NULL) {
-      err = js_throw_error(env, NULL, "Dynamic import() is not supported");
-      assert(err == 0);
-
-      goto done;
-    }
-
-    js_value_t referrer = {
-      .value = JS_NULL,
-    };
-
-    if (env->callbacks.dynamic_import) {
-      module = env->callbacks.dynamic_import(
-        env,
-        &specifier,
-        &assertions,
-        &referrer,
-        env->callbacks.dynamic_import_data
-      );
-
-      if (module == NULL) goto done;
-
-      definition = module->definition;
-    } else {
-      // TODO
-      abort();
-    }
+    err = js_throw_error(env, NULL, "Dynamic import() is not supported");
+    assert(err == 0);
   }
 
 done:
