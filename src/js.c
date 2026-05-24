@@ -108,7 +108,6 @@ struct js_env_s {
     void *unhandled_rejection_data;
 
     js_dynamic_import_cb dynamic_import;
-    js_dynamic_import_transitional_cb dynamic_import_transitional;
     void *dynamic_import_data;
   } callbacks;
 };
@@ -414,7 +413,7 @@ js__on_resolve_module(JSContext *context, const char *name, void *opaque) {
 
     definition = module->definition;
   } else {
-    if (env->callbacks.dynamic_import == NULL && env->callbacks.dynamic_import_transitional == NULL) {
+    if (env->callbacks.dynamic_import == NULL) {
       err = js_throw_error(env, NULL, "Dynamic import() is not supported");
       assert(err == 0);
 
@@ -792,7 +791,6 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   env->callbacks.unhandled_rejection_data = NULL;
 
   env->callbacks.dynamic_import = NULL;
-  env->callbacks.dynamic_import_transitional = NULL;
   env->callbacks.dynamic_import_data = NULL;
 
   JS_SetRuntimeOpaque(env->runtime, env);
@@ -907,11 +905,8 @@ js_on_dynamic_import(js_env_t *env, js_dynamic_import_cb cb, void *data) {
 }
 
 int
-js_on_dynamic_import_transitional(js_env_t *env, js_dynamic_import_transitional_cb cb, void *data) {
-  env->callbacks.dynamic_import_transitional = cb;
-  env->callbacks.dynamic_import_data = data;
-
-  return 0;
+js_on_dynamic_import_transitional(js_env_t *env, js_dynamic_import_cb cb, void *data) {
+  return js_on_dynamic_import(env, cb, data);
 }
 
 int
@@ -6371,7 +6366,7 @@ js_on_inspector_response(js_env_t *env, js_inspector_t *inspector, js_inspector_
 }
 
 int
-js_on_inspector_response_transitional(js_env_t *env, js_inspector_t *inspector, js_inspector_message_transitional_cb cb, void *data) {
+js_on_inspector_response_transitional(js_env_t *env, js_inspector_t *inspector, js_inspector_message_cb cb, void *data) {
   return 0;
 }
 
@@ -6391,7 +6386,7 @@ js_connect_inspector(js_env_t *env, js_inspector_t *inspector) {
 }
 
 int
-js_send_inspector_request(js_env_t *env, js_inspector_t *inspector, js_value_t *message) {
+js_send_inspector_request(js_env_t *env, js_inspector_t *inspector, const char *message, size_t len) {
   int err;
 
   err = js_throw_error(env, NULL, "Unsupported operation");
@@ -6401,7 +6396,7 @@ js_send_inspector_request(js_env_t *env, js_inspector_t *inspector, js_value_t *
 }
 
 int
-js_send_inspector_request_transitional(js_env_t *env, js_inspector_t *inspector, const char *message, size_t len) {
+js_send_inspector_request(js_env_t *env, js_inspector_t *inspector, const char *message, size_t len) {
   int err;
 
   err = js_throw_error(env, NULL, "Unsupported operation");
