@@ -6371,7 +6371,7 @@ js_send_inspector_request(js_env_t *env, js_inspector_t *inspector, const char *
 }
 
 int
-js_send_inspector_request(js_env_t *env, js_inspector_t *inspector, const char *message, size_t len) {
+js_send_inspector_request_transitional(js_env_t *env, js_inspector_t *inspector, const char *message, size_t len) {
   int err;
 
   err = js_throw_error(env, NULL, "Unsupported operation");
