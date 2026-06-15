@@ -1,0 +1,50 @@
+diff --git a/dtoa.c b/dtoa.c
+index ac1be8d..9732a77 100644
+--- a/dtoa.c
++++ b/dtoa.c
+@@ -28,7 +28,6 @@
+ #include <string.h>
+ #include <assert.h>
+ #include <ctype.h>
+-#include <sys/time.h>
+ #include <math.h>
+ #include <setjmp.h>
+ 
+diff --git a/quickjs.c b/quickjs.c
+index fa5a7a9..4065d34 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -28,7 +28,6 @@
+ #include <inttypes.h>
+ #include <string.h>
+ #include <assert.h>
+-#include <sys/time.h>
+ #include <time.h>
+ #include <fenv.h>
+ #include <math.h>
+@@ -47145,9 +47144,9 @@ static uint64_t xorshift64star(uint64_t *pstate)
+ 
+ static void js_random_init(JSContext *ctx)
+ {
+-    struct timeval tv;
+-    gettimeofday(&tv, NULL);
+-    ctx->random_state = ((int64_t)tv.tv_sec * 1000000) + tv.tv_usec;
++    struct timespec tv;
++    timespec_get(&tv, TIME_UTC);
++    ctx->random_state = ((int64_t)tv.tv_sec * 1000000) + (tv.tv_nsec / 1000);
+     /* the state must be non zero */
+     if (ctx->random_state == 0)
+         ctx->random_state = 1;
+@@ -55168,9 +55167,9 @@ static JSValue get_date_string(JSContext *ctx, JSValueConst this_val,
+ 
+ /* OS dependent: return the UTC time in ms since 1970. */
+ static int64_t date_now(void) {
+-    struct timeval tv;
+-    gettimeofday(&tv, NULL);
+-    return (int64_t)tv.tv_sec * 1000 + (tv.tv_usec / 1000);
++    struct timespec tv;
++    timespec_get(&tv, TIME_UTC);
++    return (int64_t)tv.tv_sec * 1000 + (tv.tv_nsec / 1000000);
+ }
+ 
+ static JSValue js_date_constructor(JSContext *ctx, JSValueConst new_target,

@@ -1,0 +1,69 @@
+diff --git a/quickjs.c b/quickjs.c
+index 2412db3..423de36 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -1005,6 +1005,7 @@ struct JSObject {
+     uint8_t has_immutable_prototype : 1; /* cannot modify the prototype */
+     uint8_t tmp_mark : 1; /* used in JS_WriteObjectRec() */
+     uint8_t is_HTMLDDA : 1; /* specific annex B IsHtmlDDA behavior */
++    uint8_t is_uncatchable_error : 1; /* if TRUE, the error is not catchable */
+     uint16_t class_id; /* see JS_CLASS_x */
+     /* count the number of weak references to this object. The object
+        structure is freed only if header.ref_count = 0 and
+@@ -5715,6 +5716,7 @@ static JSValue JS_NewObjectFromShape(JSContext *ctx, JSShape *sh, JSClassID clas
+     p->has_immutable_prototype = 0;
+     p->tmp_mark = 0;
+     p->is_HTMLDDA = 0;
++    p->is_uncatchable_error = 0;
+     p->weakref_count = 0;
+     p->u.opaque = NULL;
+     p->shape = sh;
+@@ -11103,6 +11105,25 @@ void JS_SetUncatchableException(JSContext *ctx, BOOL flag)
+     ctx->rt->current_exception_is_uncatchable = flag;
+ }
+ 
++JS_BOOL JS_IsUncatchableError(JSValueConst val)
++{
++    JSObject *p;
++    if (JS_VALUE_GET_TAG(val) != JS_TAG_OBJECT)
++        return FALSE;
++    p = JS_VALUE_GET_OBJ(val);
++    return p->class_id == JS_CLASS_ERROR && p->is_uncatchable_error;
++}
++
++void JS_SetUncatchableError(JSContext *ctx, JSValueConst val)
++{
++    JSObject *p;
++    if (JS_VALUE_GET_TAG(val) != JS_TAG_OBJECT)
++        return;
++    p = JS_VALUE_GET_OBJ(val);
++    if (p->class_id == JS_CLASS_ERROR)
++        p->is_uncatchable_error = TRUE;
++}
++
+ void JS_SetOpaque(JSValue obj, void *opaque)
+ {
+    JSObject *p;
+@@ -20640,7 +20661,8 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
+         sf->cur_pc = pc;
+         build_backtrace(ctx, rt->current_exception, NULL, 0, 0, 0);
+     }
+-    if (!rt->current_exception_is_uncatchable) {
++    if (!rt->current_exception_is_uncatchable &&
++        !JS_IsUncatchableError(rt->current_exception)) {
+         while (sp > stack_buf) {
+             JSValue val = *--sp;
+             JS_FreeValue(ctx, val);
+diff --git a/quickjs.h b/quickjs.h
+index f006af0..7172dc3 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -667,6 +667,8 @@ static inline JS_BOOL JS_IsObject(JSValueConst v)
+ const char *JS_GetVersion(void);
+ JSValue JS_Throw(JSContext *ctx, JSValue obj);
+ void JS_SetUncatchableException(JSContext *ctx, JS_BOOL flag);
++JS_BOOL JS_IsUncatchableError(JSValueConst val);
++void JS_SetUncatchableError(JSContext *ctx, JSValueConst val);
+ JSValue JS_GetException(JSContext *ctx);
+ JS_BOOL JS_HasException(JSContext *ctx);
+ JS_BOOL JS_IsError(JSContext *ctx, JSValueConst val);

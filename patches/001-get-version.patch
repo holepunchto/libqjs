@@ -1,0 +1,28 @@
+diff --git a/quickjs.c b/quickjs.c
+index fa5a7a9..110e9f1 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -3837,6 +3837,11 @@ JSClassID JS_NewClassID(JSClassID *pclass_id)
+     return class_id;
+ }
+ 
++const char *JS_GetVersion(void)
++{
++    return CONFIG_VERSION;
++}
++
+ JSClassID JS_GetClassID(JSValue v)
+ {
+     JSObject *p;
+diff --git a/quickjs.h b/quickjs.h
+index 476d735..682ab64 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -664,6 +664,7 @@ static inline JS_BOOL JS_IsObject(JSValueConst v)
+     return JS_VALUE_GET_TAG(v) == JS_TAG_OBJECT;
+ }
+ 
++const char *JS_GetVersion(void);
+ JSValue JS_Throw(JSContext *ctx, JSValue obj);
+ void JS_SetUncatchableException(JSContext *ctx, JS_BOOL flag);
+ JSValue JS_GetException(JSContext *ctx);
