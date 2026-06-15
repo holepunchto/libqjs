@@ -17,6 +17,14 @@
 #include <uv.h>
 #include <wchar.h>
 
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#elif defined(__linux__) || defined(__GLIBC__)
+#include <malloc.h>
+#elif defined(_WIN32)
+#include <malloc.h>
+#endif
+
 typedef struct js_callback_s js_callback_t;
 typedef struct js_finalizer_s js_finalizer_t;
 typedef struct js_finalizer_list_s js_finalizer_list_t;
@@ -601,24 +609,72 @@ js__on_check(uv_check_t *handle) {
   js__on_check_liveness(env);
 }
 
+static inline size_t
+js__usable_size(const void *ptr) {
+#if defined(__APPLE__)
+  return malloc_size(ptr);
+#elif defined(_WIN32)
+  return _msize((void *) ptr);
+#elif defined(__linux__) || defined(__GLIBC__)
+  return malloc_usable_size((void *) ptr);
+#else
+  return 0;
+#endif
+}
+
 static void *
 js__on_malloc(JSMallocState *s, size_t len) {
-  return malloc(len);
+  void *ptr = malloc(len);
+
+  if (ptr == NULL) return NULL;
+
+  s->malloc_count++;
+  s->malloc_size += js__usable_size(ptr);
+
+  return ptr;
 }
 
 static void
 js__on_free(JSMallocState *s, void *ptr) {
+  if (ptr == NULL) return;
+
+  s->malloc_count--;
+  s->malloc_size -= js__usable_size(ptr);
+
   free(ptr);
 }
 
 static void *
 js__on_realloc(JSMallocState *s, void *ptr, size_t len) {
-  return realloc(ptr, len);
+  if (ptr == NULL) {
+    if (len == 0) return NULL;
+
+    return js__on_malloc(s, len);
+  }
+
+  size_t old_size = js__usable_size(ptr);
+
+  if (len == 0) {
+    s->malloc_count--;
+    s->malloc_size -= old_size;
+
+    free(ptr);
+
+    return NULL;
+  }
+
+  void *next = realloc(ptr, len);
+
+  if (next == NULL) return NULL;
+
+  s->malloc_size += js__usable_size(next) - old_size;
+
+  return next;
 }
 
 static size_t
 js__on_usable_size(const void *ptr) {
-  return 0;
+  return js__usable_size(ptr);
 }
 
 static void *
@@ -3149,49 +3205,14 @@ js_create_sharedarraybuffer(js_env_t *env, size_t len, void **data, js_value_t *
   return 0;
 }
 
-static void
-js__on_external_sharedarraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) {
-  if (ptr == NULL) return;
-
-  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
-
-  js_finalizer_t *finalizer = (js_finalizer_t *) opaque;
-
-  if (finalizer->finalize_cb) {
-    finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
-  }
-
-  free(finalizer);
-}
-
 int
 js_create_external_sharedarraybuffer(js_env_t *env, void *data, size_t len, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
-  if (JS_HasException(env->context)) return js__error(env);
+  int err;
 
-  js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
+  err = js_throw_error(env, NULL, "Unsupported operation");
+  assert(err == 0);
 
-  finalizer->data = data;
-  finalizer->finalize_cb = finalize_cb;
-  finalizer->finalize_hint = finalize_hint;
-
-  js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t));
-
-  header->len = len;
-  header->data = data;
-
-  atomic_init(&header->references, 0);
-
-  JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, header->data, header->len, js__on_external_sharedarraybuffer_finalize, (void *) finalizer, true);
-
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
-
-  wrapper->value = sharedarraybuffer;
-
-  *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
-
-  return 0;
+  return js__error(env);
 }
 
 int
@@ -3589,7 +3610,7 @@ int
 js_is_generator_function(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = false;
+  *result = JS_IsGeneratorFunction(value->value);
 
   return 0;
 }
@@ -3598,7 +3619,7 @@ int
 js_is_generator(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = false;
+  *result = JS_IsGenerator(value->value);
 
   return 0;
 }
@@ -3607,7 +3628,7 @@ int
 js_is_arguments(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = false;
+  *result = JS_IsArguments(value->value);
 
   return 0;
 }
@@ -3719,7 +3740,7 @@ int
 js_is_map_iterator(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = false;
+  *result = JS_IsMapIterator(value->value);
 
   return 0;
 }
@@ -3737,7 +3758,7 @@ int
 js_is_set_iterator(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = false;
+  *result = JS_IsSetIterator(value->value);
 
   return 0;
 }
@@ -4096,7 +4117,7 @@ int
 js_is_module_namespace(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = false;
+  *result = JS_IsModuleNamespace(value->value);
 
   return 0;
 }
@@ -4748,7 +4769,7 @@ js_has_own_property(js_env_t *env, js_value_t *object, js_value_t *key, bool *re
 
   env->depth++;
 
-  int success = JS_HasProperty(env->context, object->value, atom);
+  int success = JS_GetOwnProperty(env->context, NULL, object->value, atom);
 
   JS_FreeAtom(env->context, atom);
 
@@ -6292,13 +6313,38 @@ js_request_garbage_collection(js_env_t *env) {
 }
 
 int
-js_get_heap_statistics(js_env_t *env, js_heap_statistics_t *result) {
+js_enable_garbage_collection_tracking(js_env_t *env, const js_garbage_collection_tracking_options_t *options, void *data, js_garbage_collection_tracking_t **result) {
   int err;
 
   err = js_throw_error(env, NULL, "Unsupported operation");
   assert(err == 0);
 
   return js__error(env);
+}
+
+int
+js_disable_garbage_collection_tracking(js_env_t *env, js_garbage_collection_tracking_t *tracking) {
+  int err;
+
+  err = js_throw_error(env, NULL, "Unsupported operation");
+  assert(err == 0);
+
+  return js__error(env);
+}
+
+int
+js_get_heap_statistics(js_env_t *env, js_heap_statistics_t *result) {
+  // Allow continuing even with a pending exception
+
+  JSMemoryUsage usage;
+
+  JS_ComputeMemoryUsage(env->runtime, &usage);
+
+  result->total_heap_size = (size_t) usage.malloc_size;
+  result->used_heap_size = (size_t) usage.memory_used_size;
+  result->external_memory = (size_t) env->external_memory;
+
+  return 0;
 }
 
 int

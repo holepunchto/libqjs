@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 18d9103..9d81339 100644
+index fa5a7a9..2a91508 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -3851,6 +3851,66 @@ JSClassID JS_GetClassID(JSValue v)
+@@ -3846,6 +3846,97 @@ JSClassID JS_GetClassID(JSValue v)
      return p->class_id;
  }
  
@@ -66,14 +66,45 @@ index 18d9103..9d81339 100644
 +    return JS_GetClassID(v) == JS_CLASS_ASYNC_FUNCTION;
 +}
 +
++JS_BOOL JS_IsGeneratorFunction(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_GENERATOR_FUNCTION;
++}
++
++JS_BOOL JS_IsGenerator(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_GENERATOR;
++}
++
++JS_BOOL JS_IsArguments(JSValueConst v)
++{
++    JSClassID class_id = JS_GetClassID(v);
++    return class_id == JS_CLASS_ARGUMENTS || class_id == JS_CLASS_MAPPED_ARGUMENTS;
++}
++
++JS_BOOL JS_IsMapIterator(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_MAP_ITERATOR;
++}
++
++JS_BOOL JS_IsSetIterator(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_SET_ITERATOR;
++}
++
++JS_BOOL JS_IsModuleNamespace(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_MODULE_NS;
++}
++
  BOOL JS_IsRegisteredClass(JSRuntime *rt, JSClassID class_id)
  {
      return (class_id < rt->class_count &&
 diff --git a/quickjs.h b/quickjs.h
-index dbc6d67..0515cd2 100644
+index 476d735..d964b49 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -772,6 +772,18 @@ JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val)
+@@ -770,6 +770,24 @@ JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val)
  
  JSValue JS_NewArray(JSContext *ctx);
  int JS_IsArray(JSContext *ctx, JSValueConst val);
@@ -89,6 +120,12 @@ index dbc6d67..0515cd2 100644
 +JS_BOOL JS_IsWeakSet(JSValueConst val);
 +JS_BOOL JS_IsWeakRef(JSValueConst val);
 +JS_BOOL JS_IsAsyncFunction(JSValueConst val);
++JS_BOOL JS_IsGeneratorFunction(JSValueConst val);
++JS_BOOL JS_IsGenerator(JSValueConst val);
++JS_BOOL JS_IsArguments(JSValueConst val);
++JS_BOOL JS_IsMapIterator(JSValueConst val);
++JS_BOOL JS_IsSetIterator(JSValueConst val);
++JS_BOOL JS_IsModuleNamespace(JSValueConst val);
  
  JSValue JS_NewDate(JSContext *ctx, double epoch_ms);
  
