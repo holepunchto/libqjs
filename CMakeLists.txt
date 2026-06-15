@@ -4,7 +4,51 @@ find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 
 project(js C)
 
-fetch_package("github:quickjs-ng/quickjs@0.15.0")
+fetch_package(
+  "github:bellard/quickjs#master"
+  SOURCE_DIR qjs
+  PATCHES
+    patches/001-get-version.patch
+    patches/002-type-predicates.patch
+    patches/003-coercion.patch
+    patches/004-new-symbol.patch
+    patches/005-uncatchable-error.patch
+)
+
+file(READ ${qjs}/VERSION qjs_version)
+
+string(STRIP "${qjs_version}" qjs_version)
+
+add_library(qjs OBJECT)
+
+set_target_properties(
+  qjs
+  PROPERTIES
+  C_STANDARD 11
+  POSITION_INDEPENDENT_CODE ON
+)
+
+target_sources(
+  qjs
+  PRIVATE
+    ${qjs}/quickjs.c
+    ${qjs}/dtoa.c
+    ${qjs}/libregexp.c
+    ${qjs}/libunicode.c
+    ${qjs}/cutils.c
+)
+
+target_compile_definitions(
+  qjs
+  PRIVATE
+    CONFIG_VERSION="${qjs_version}"
+)
+
+target_include_directories(
+  qjs
+  PUBLIC
+    ${qjs}
+)
 
 add_library(js OBJECT)
 
@@ -60,8 +104,6 @@ target_link_libraries(
     utf_shared
   PRIVATE
     js
-  PRIVATE
-    $<TARGET_OBJECTS:qjs>
 )
 
 add_library(js_static STATIC)
@@ -87,8 +129,6 @@ target_link_libraries(
     utf_static
   PRIVATE
     js
-  PRIVATE
-    $<TARGET_OBJECTS:qjs>
 )
 
 install(TARGETS js_shared js_static)

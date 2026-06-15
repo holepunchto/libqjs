@@ -92,15 +92,6 @@ struct js_env_s {
   js_teardown_queue_t teardown_queue;
 
   struct {
-    JSClassID external;
-    JSClassID finalizer;
-    JSClassID type_tag;
-    JSClassID function;
-    JSClassID constructor;
-    JSClassID delegate;
-  } classes;
-
-  struct {
     js_uncaught_exception_cb uncaught_exception;
     void *uncaught_exception_data;
 
@@ -251,8 +242,93 @@ struct js_threadsafe_function_s {
 
 static const char *js__platform_identifier = "quickjs";
 
+static void
+js__on_external_finalize(JSRuntime *runtime, JSValue value);
+
+static JSClassID js__external_class_id;
+
+static JSClassDef js__external_class = {
+  .class_name = "External",
+  .finalizer = js__on_external_finalize,
+};
+
+static void
+js__on_finalizer_finalize(JSRuntime *runtime, JSValue value);
+
+static JSClassID js__finalizer_class_id;
+
+static JSClassDef js__finalizer_class = {
+  .class_name = "Finalizer",
+  .finalizer = js__on_finalizer_finalize,
+};
+
+static void
+js__on_type_tag_finalize(JSRuntime *runtime, JSValue value);
+
+static JSClassID js__type_tag_class_id;
+
+static JSClassDef js__type_tag_class = {
+  .class_name = "TypeTag",
+  .finalizer = js__on_type_tag_finalize,
+};
+
+static void
+js__on_function_finalize(JSRuntime *runtime, JSValue value);
+
+static JSClassID js__function_class_id;
+
+static JSClassDef js__function_class = {
+  .class_name = "Function",
+  .finalizer = js__on_function_finalize,
+};
+
+static void
+js__on_constructor_finalize(JSRuntime *runtime, JSValue value);
+
+static JSClassID js__constructor_class_id;
+
+static JSClassDef js__constructor_class = {
+  .class_name = "Constructor",
+  .finalizer = js__on_constructor_finalize,
+};
+
+static int
+js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descriptor, JSValueConst object, JSAtom property);
+
+static int
+js__on_delegate_get_own_property_names(JSContext *context, JSPropertyEnum **properties, uint32_t *len, JSValueConst object);
+
+static int
+js__on_delegate_delete_property(JSContext *context, JSValueConst object, JSAtom property);
+
+static int
+js__on_delegate_set_property(JSContext *context, JSValueConst object, JSAtom property, JSValueConst value, JSValueConst receiver, int flags);
+
+static void
+js__on_delegate_finalize(JSRuntime *runtime, JSValue value);
+
+static JSClassID js__delegate_class_id;
+
+static JSClassDef js__delegate_class = {
+  .class_name = "Delegate",
+  .finalizer = js__on_delegate_finalize,
+  .exotic = &(JSClassExoticMethods){
+    .get_own_property = js__on_delegate_get_own_property,
+    .get_own_property_names = js__on_delegate_get_own_property_names,
+    .delete_property = js__on_delegate_delete_property,
+    .set_property = js__on_delegate_set_property,
+  },
+};
+
 int
 js_create_platform(uv_loop_t *loop, const js_platform_options_t *options, js_platform_t **result) {
+  JS_NewClassID(&js__external_class_id);
+  JS_NewClassID(&js__finalizer_class_id);
+  JS_NewClassID(&js__type_tag_class_id);
+  JS_NewClassID(&js__function_class_id);
+  JS_NewClassID(&js__constructor_class_id);
+  JS_NewClassID(&js__delegate_class_id);
+
   js_platform_t *platform = malloc(sizeof(js_platform_t));
 
   platform->loop = loop;
@@ -298,72 +374,6 @@ js_get_platform_loop(js_platform_t *platform, uv_loop_t **result) {
 
   return 0;
 }
-
-static void
-js__on_external_finalize(JSRuntime *runtime, JSValue value);
-
-static JSClassDef js__external_class = {
-  .class_name = "External",
-  .finalizer = js__on_external_finalize,
-};
-
-static void
-js__on_finalizer_finalize(JSRuntime *runtime, JSValue value);
-
-static JSClassDef js__finalizer_class = {
-  .class_name = "Finalizer",
-  .finalizer = js__on_finalizer_finalize,
-};
-
-static void
-js__on_type_tag_finalize(JSRuntime *runtime, JSValue value);
-
-static JSClassDef js__type_tag_class = {
-  .class_name = "TypeTag",
-  .finalizer = js__on_type_tag_finalize,
-};
-
-static void
-js__on_function_finalize(JSRuntime *runtime, JSValue value);
-
-static JSClassDef js__function_class = {
-  .class_name = "Function",
-  .finalizer = js__on_function_finalize,
-};
-
-static void
-js__on_constructor_finalize(JSRuntime *runtime, JSValue value);
-
-static JSClassDef js__constructor_class = {
-  .class_name = "Constructor",
-  .finalizer = js__on_constructor_finalize,
-};
-
-static int
-js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descriptor, JSValueConst object, JSAtom property);
-
-static int
-js__on_delegate_get_own_property_names(JSContext *context, JSPropertyEnum **properties, uint32_t *len, JSValueConst object);
-
-static int
-js__on_delegate_delete_property(JSContext *context, JSValueConst object, JSAtom property);
-
-static int
-js__on_delegate_set_property(JSContext *context, JSValueConst object, JSAtom property, JSValueConst value, JSValueConst receiver, int flags);
-
-static void
-js__on_delegate_finalize(JSRuntime *runtime, JSValue value);
-
-static JSClassDef js__delegate_class = {
-  .class_name = "Delegate",
-  .finalizer = js__on_delegate_finalize,
-  .exotic = &(JSClassExoticMethods){
-    .get_own_property = js__on_delegate_get_own_property,
-    .get_own_property_names = js__on_delegate_get_own_property_names,
-    .delete_property = js__on_delegate_delete_property,
-    .set_property = js__on_delegate_set_property,
-  },
-};
 
 static JSModuleDef *
 js__on_resolve_module(JSContext *context, const char *name, void *opaque) {
@@ -483,7 +493,7 @@ js__on_unhandled_rejection(JSContext *context, JSValue promise, JSValue reason) 
 }
 
 static void
-js__on_promise_rejection(JSContext *context, JSValueConst promise, JSValueConst reason, bool is_handled, void *opaque) {
+js__on_promise_rejection(JSContext *context, JSValueConst promise, JSValueConst reason, int is_handled, void *opaque) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
   if (env->callbacks.unhandled_rejection == NULL) return;
@@ -592,22 +602,17 @@ js__on_check(uv_check_t *handle) {
 }
 
 static void *
-js__on_calloc(void *opaque, size_t count, size_t len) {
-  return calloc(count, len);
-}
-
-static void *
-js__on_malloc(void *opaque, size_t len) {
+js__on_malloc(JSMallocState *s, size_t len) {
   return malloc(len);
 }
 
 static void
-js__on_free(void *opaque, void *ptr) {
+js__on_free(JSMallocState *s, void *ptr) {
   free(ptr);
 }
 
 static void *
-js__on_realloc(void *opaque, void *ptr, size_t len) {
+js__on_realloc(JSMallocState *s, void *ptr, size_t len) {
   return realloc(ptr, len);
 }
 
@@ -687,7 +692,6 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   JSRuntime *runtime = JS_NewRuntime2(
     &(JSMallocFunctions){
-      .js_calloc = js__on_calloc,
       .js_malloc = js__on_malloc,
       .js_free = js__on_free,
       .js_realloc = js__on_realloc,
@@ -752,13 +756,6 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   intrusive_list_init(&env->teardown_queue.tasks);
 
-  env->classes.external = 0;
-  env->classes.finalizer = 0;
-  env->classes.type_tag = 0;
-  env->classes.function = 0;
-  env->classes.constructor = 0;
-  env->classes.delegate = 0;
-
   env->callbacks.uncaught_exception = NULL;
   env->callbacks.uncaught_exception_data = NULL;
 
@@ -771,28 +768,22 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   JS_SetRuntimeOpaque(env->runtime, env);
   JS_SetContextOpaque(env->context, env);
 
-  JS_NewClassID(runtime, &env->classes.external);
-  err = JS_NewClass(runtime, env->classes.external, &js__external_class);
+  err = JS_NewClass(runtime, js__external_class_id, &js__external_class);
   assert(err == 0);
 
-  JS_NewClassID(runtime, &env->classes.finalizer);
-  err = JS_NewClass(runtime, env->classes.finalizer, &js__finalizer_class);
+  err = JS_NewClass(runtime, js__finalizer_class_id, &js__finalizer_class);
   assert(err == 0);
 
-  JS_NewClassID(runtime, &env->classes.type_tag);
-  err = JS_NewClass(runtime, env->classes.type_tag, &js__type_tag_class);
+  err = JS_NewClass(runtime, js__type_tag_class_id, &js__type_tag_class);
   assert(err == 0);
 
-  JS_NewClassID(runtime, &env->classes.function);
-  err = JS_NewClass(runtime, env->classes.function, &js__function_class);
+  err = JS_NewClass(runtime, js__function_class_id, &js__function_class);
   assert(err == 0);
 
-  JS_NewClassID(runtime, &env->classes.constructor);
-  err = JS_NewClass(runtime, env->classes.constructor, &js__constructor_class);
+  err = JS_NewClass(runtime, js__constructor_class_id, &js__constructor_class);
   assert(err == 0);
 
-  JS_NewClassID(runtime, &env->classes.delegate);
-  err = JS_NewClass(runtime, env->classes.delegate, &js__delegate_class);
+  err = JS_NewClass(runtime, js__delegate_class_id, &js__delegate_class);
   assert(err == 0);
 
   err = uv_prepare_init(loop, &env->prepare);
@@ -1391,7 +1382,7 @@ js__set_weak_reference(js_env_t *env, js_ref_t *reference) {
 
     reference->symbol = JS_NewSymbol(env->context, "__native_reference", false);
 
-    JSValue external = JS_NewObjectClass(env->context, env->classes.external);
+    JSValue external = JS_NewObjectClass(env->context, js__external_class_id);
 
     JS_SetOpaque(external, finalizer);
 
@@ -1419,7 +1410,7 @@ js__clear_weak_reference(js_env_t *env, js_ref_t *reference) {
 
     JSValue external = JS_GetProperty(env->context, reference->value, atom);
 
-    js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, env->classes.external);
+    js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js__external_class_id);
 
     JS_FreeValue(env->context, external);
 
@@ -1517,7 +1508,7 @@ static void
 js__on_constructor_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
-  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(value, env->classes.constructor);
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(value, js__constructor_class_id);
 
   free(callback);
 }
@@ -1534,7 +1525,7 @@ js__on_constructor_call(JSContext *context, JSValueConst new_target, int argc, J
 
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, env->classes.constructor);
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js__constructor_class_id);
 
   js_callback_info_t callback_info = {
     .callback = callback,
@@ -1578,7 +1569,7 @@ js_define_class(js_env_t *env, const char *name, size_t len, js_function_cb cons
   callback->cb = constructor;
   callback->data = data;
 
-  JSValue external = JS_NewObjectClass(env->context, env->classes.constructor);
+  JSValue external = JS_NewObjectClass(env->context, js__constructor_class_id);
 
   JS_SetOpaque(external, callback);
 
@@ -1734,7 +1725,7 @@ js_wrap(js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_c
   finalizer->finalize_cb = finalize_cb;
   finalizer->finalize_hint = finalize_hint;
 
-  JSValue external = JS_NewObjectClass(env->context, env->classes.external);
+  JSValue external = JS_NewObjectClass(env->context, js__external_class_id);
 
   JS_SetOpaque(external, finalizer);
 
@@ -1746,6 +1737,8 @@ js_wrap(js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_c
     JS_FreeValue(env->context, external);
 
     JS_FreeAtom(env->context, atom);
+
+    free(finalizer);
 
     return js__error(env);
   }
@@ -1767,7 +1760,7 @@ js_unwrap(js_env_t *env, js_value_t *object, void **result) {
 
   JS_FreeAtom(env->context, atom);
 
-  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, env->classes.external);
+  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js__external_class_id);
 
   JS_FreeValue(env->context, external);
 
@@ -1786,7 +1779,7 @@ js_remove_wrap(js_env_t *env, js_value_t *object, void **result) {
 
   JSValue external = JS_GetProperty(env->context, object->value, atom);
 
-  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, env->classes.external);
+  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js__external_class_id);
 
   JS_FreeValue(env->context, external);
 
@@ -1811,7 +1804,7 @@ static int
 js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descriptor, JSValueConst object, JSAtom name) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, env->classes.delegate);
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js__delegate_class_id);
 
   if (delegate->callbacks.has) {
     JSValue property = JS_AtomToValue(env->context, name);
@@ -1855,7 +1848,7 @@ js__on_delegate_get_own_property_names(JSContext *context, JSPropertyEnum **ppro
 
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, env->classes.delegate);
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js__delegate_class_id);
 
   if (delegate->callbacks.own_keys) {
     js_value_t *result = delegate->callbacks.own_keys(env, delegate->data);
@@ -1866,7 +1859,7 @@ js__on_delegate_get_own_property_names(JSContext *context, JSPropertyEnum **ppro
     err = js_get_array_length(env, result, &len);
     assert(err == 0);
 
-    JSPropertyEnum *properties = calloc(len, sizeof(JSPropertyEnum));
+    JSPropertyEnum *properties = js_mallocz(env->context, len * sizeof(JSPropertyEnum));
 
     for (uint32_t i = 0; i < len; i++) {
       js_value_t *value;
@@ -1892,7 +1885,7 @@ static int
 js__on_delegate_delete_property(JSContext *context, JSValueConst object, JSAtom name) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, env->classes.delegate);
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js__delegate_class_id);
 
   if (delegate->callbacks.delete_property) {
     JSValue property = JS_AtomToValue(env->context, name);
@@ -1913,7 +1906,7 @@ static int
 js__on_delegate_set_property(JSContext *context, JSValueConst object, JSAtom name, JSValueConst value, JSValueConst receiver, int flags) {
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, env->classes.delegate);
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(object, js__delegate_class_id);
 
   if (delegate->callbacks.set) {
     JSValue property = JS_AtomToValue(env->context, name);
@@ -1934,7 +1927,7 @@ static void
 js__on_delegate_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
-  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(value, env->classes.delegate);
+  js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(value, js__delegate_class_id);
 
   if (delegate->finalize_cb) {
     delegate->finalize_cb(env, delegate->data, delegate->finalize_hint);
@@ -1955,7 +1948,7 @@ js_create_delegate(js_env_t *env, const js_delegate_callbacks_t *callbacks, void
 
   memcpy(&delegate->callbacks, callbacks, sizeof(js_delegate_callbacks_t));
 
-  JSValue object = JS_NewObjectClass(env->context, env->classes.delegate);
+  JSValue object = JS_NewObjectClass(env->context, js__delegate_class_id);
 
   JS_SetOpaque(object, delegate);
 
@@ -1974,7 +1967,7 @@ static void
 js__on_finalizer_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
-  js_finalizer_list_t *next = (js_finalizer_list_t *) JS_GetOpaque(value, env->classes.finalizer);
+  js_finalizer_list_t *next = (js_finalizer_list_t *) JS_GetOpaque(value, js__finalizer_class_id);
   js_finalizer_list_t *prev;
 
   while (next) {
@@ -2012,7 +2005,7 @@ js_add_finalizer(js_env_t *env, js_value_t *object, void *data, js_finalize_cb f
   if (JS_HasProperty(env->context, object->value, atom) == 1) {
     external = JS_GetProperty(env->context, object->value, atom);
   } else {
-    external = JS_NewObjectClass(env->context, env->classes.finalizer);
+    external = JS_NewObjectClass(env->context, js__finalizer_class_id);
 
     JS_SetOpaque(external, NULL);
 
@@ -2024,7 +2017,7 @@ js_add_finalizer(js_env_t *env, js_value_t *object, void *data, js_finalize_cb f
 
   JS_FreeAtom(env->context, atom);
 
-  prev->next = (js_finalizer_list_t *) JS_GetOpaque(external, env->classes.finalizer);
+  prev->next = (js_finalizer_list_t *) JS_GetOpaque(external, js__finalizer_class_id);
 
   JS_SetOpaque(external, prev);
 
@@ -2039,7 +2032,7 @@ static void
 js__on_type_tag_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
-  js_type_tag_t *tag = (js_type_tag_t *) JS_GetOpaque(value, env->classes.type_tag);
+  js_type_tag_t *tag = (js_type_tag_t *) JS_GetOpaque(value, js__type_tag_class_id);
 
   free(tag);
 }
@@ -2066,7 +2059,7 @@ js_add_type_tag(js_env_t *env, js_value_t *object, const js_type_tag_t *tag) {
   existing->lower = tag->lower;
   existing->upper = tag->upper;
 
-  JSValue external = JS_NewObjectClass(env->context, env->classes.type_tag);
+  JSValue external = JS_NewObjectClass(env->context, js__type_tag_class_id);
 
   JS_SetOpaque(external, existing);
 
@@ -2089,7 +2082,7 @@ js_check_type_tag(js_env_t *env, js_value_t *object, const js_type_tag_t *tag, b
   if (JS_HasProperty(env->context, object->value, atom) == 1) {
     JSValue external = JS_GetProperty(env->context, object->value, atom);
 
-    js_type_tag_t *existing = (js_type_tag_t *) JS_GetOpaque(external, env->classes.type_tag);
+    js_type_tag_t *existing = (js_type_tag_t *) JS_GetOpaque(external, js__type_tag_class_id);
 
     JS_FreeValue(env->context, external);
 
@@ -2414,7 +2407,7 @@ static void
 js__on_function_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
-  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(value, env->classes.function);
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(value, js__function_class_id);
 
   free(callback);
 }
@@ -2425,7 +2418,7 @@ js__on_function_call(JSContext *context, JSValueConst receiver, int argc, JSValu
 
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, env->classes.function);
+  js_callback_t *callback = (js_callback_t *) JS_GetOpaque(*data, js__function_class_id);
 
   js_callback_info_t callback_info = {
     .callback = callback,
@@ -2466,7 +2459,7 @@ js_create_function(js_env_t *env, const char *name, size_t len, js_function_cb c
   callback->cb = cb;
   callback->data = data;
 
-  JSValue external = JS_NewObjectClass(env->context, env->classes.function);
+  JSValue external = JS_NewObjectClass(env->context, js__function_class_id);
 
   JS_SetOpaque(external, callback);
 
@@ -2644,7 +2637,7 @@ static void
 js__on_external_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
-  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value, env->classes.external);
+  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value, js__external_class_id);
 
   if (finalizer->finalize_cb) {
     finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
@@ -2663,7 +2656,7 @@ js_create_external(js_env_t *env, void *data, js_finalize_cb finalize_cb, void *
   finalizer->finalize_cb = finalize_cb;
   finalizer->finalize_hint = finalize_hint;
 
-  JSValue external = JS_NewObjectClass(env->context, env->classes.external);
+  JSValue external = JS_NewObjectClass(env->context, js__external_class_id);
 
   JS_SetOpaque(external, finalizer);
 
@@ -3437,14 +3430,14 @@ js_typeof(js_env_t *env, js_value_t *value, js_value_type_t *result) {
 
   if (JS_IsNumber(value->value)) {
     *result = js_number;
-  } else if (JS_IsBigInt(value->value)) {
+  } else if (JS_IsBigInt(env->context, value->value)) {
     *result = js_bigint;
   } else if (JS_IsString(value->value)) {
     *result = js_string;
   } else if (JS_IsFunction(env->context, value->value)) {
     *result = js_function;
   } else if (JS_IsObject(value->value)) {
-    *result = JS_GetOpaque(value->value, env->classes.external) != NULL
+    *result = JS_GetOpaque(value->value, js__external_class_id) != NULL
                 ? js_external
                 : js_object;
   } else if (JS_IsBool(value->value)) {
@@ -3623,7 +3616,7 @@ int
 js_is_array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsArray(value->value);
+  *result = JS_IsArray(env->context, value->value);
 
   return 0;
 }
@@ -3632,7 +3625,7 @@ int
 js_is_external(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsObject(value->value) && JS_GetOpaque(value->value, env->classes.external) != NULL;
+  *result = JS_IsObject(value->value) && JS_GetOpaque(value->value, js__external_class_id) != NULL;
 
   return 0;
 }
@@ -3654,7 +3647,7 @@ int
 js_is_delegate(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsObject(value->value) && JS_GetOpaque(value->value, env->classes.delegate) != NULL;
+  *result = JS_IsObject(value->value) && JS_GetOpaque(value->value, js__delegate_class_id) != NULL;
 
   return 0;
 }
@@ -3663,7 +3656,7 @@ int
 js_is_bigint(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsBigInt(value->value);
+  *result = JS_IsBigInt(env->context, value->value);
 
   return 0;
 }
@@ -3690,7 +3683,7 @@ int
 js_is_error(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsError(value->value);
+  *result = JS_IsError(env->context, value->value);
 
   return 0;
 }
@@ -4112,7 +4105,7 @@ int
 js_strict_equals(js_env_t *env, js_value_t *a, js_value_t *b, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsStrictEqual(env->context, a->value, b->value);
+  *result = JS_StrictEq(env->context, a->value, b->value);
 
   return 0;
 }
@@ -4334,7 +4327,7 @@ int
 js_get_value_external(js_env_t *env, js_value_t *value, void **result) {
   // Allow continuing even with a pending exception
 
-  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value->value, env->classes.external);
+  js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value->value, js__external_class_id);
 
   *result = finalizer->data;
 
