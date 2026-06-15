@@ -1,16 +1,22 @@
 diff --git a/quickjs.c b/quickjs.c
-index fa5a7a9..c73c5df 100644
+index fa5a7a9..38aa2d9 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -40,6 +40,14 @@
+@@ -40,6 +40,20 @@
  #include <malloc_np.h>
  #endif
  
 +#if defined(_WIN32)
-+/* `alloca()` is spelled `_alloca()` and declared in <malloc.h> on Windows. */
 +#include <malloc.h>
++/* `alloca()` is not declared on Windows. Prefer the compiler builtin, which is
++   a true inlined stack allocation in the caller's frame; `_alloca()` may be
++   treated as an ordinary call by clang-cl, returning a dangling pointer. */
 +#if !defined(alloca)
++#if defined(__GNUC__) || defined(__clang__)
++#define alloca __builtin_alloca
++#else
 +#define alloca _alloca
++#endif
 +#endif
 +#endif
 +
