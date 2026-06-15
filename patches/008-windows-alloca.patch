@@ -1,0 +1,19 @@
+diff --git a/quickjs.c b/quickjs.c
+index fa5a7a9..c73c5df 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -40,6 +40,14 @@
+ #include <malloc_np.h>
+ #endif
+ 
++#if defined(_WIN32)
++/* `alloca()` is spelled `_alloca()` and declared in <malloc.h> on Windows. */
++#include <malloc.h>
++#if !defined(alloca)
++#define alloca _alloca
++#endif
++#endif
++
+ #include "cutils.h"
+ #include "list.h"
+ #include "quickjs.h"

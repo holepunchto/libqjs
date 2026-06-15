@@ -15,6 +15,7 @@ fetch_package(
     patches/005-uncatchable-error.patch
     patches/006-portable-time.patch
     patches/007-windows-atomics.patch
+    patches/008-windows-alloca.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)
