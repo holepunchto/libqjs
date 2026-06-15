@@ -1,0 +1,13 @@
+diff --git a/quickjs.c b/quickjs.c
+index fa5a7a9..7b82781 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -68,7 +68,7 @@
+ 
+ /* define to include Atomics.* operations which depend on the OS
+    threads */
+-#if !defined(__EMSCRIPTEN__)
++#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
+ #define CONFIG_ATOMICS
+ #endif
+ 

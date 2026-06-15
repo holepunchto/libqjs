@@ -14,6 +14,7 @@ fetch_package(
     patches/004-new-symbol.patch
     patches/005-uncatchable-error.patch
     patches/006-portable-time.patch
+    patches/007-windows-atomics.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)
