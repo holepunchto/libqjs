@@ -1,3 +1,15 @@
+diff --git a/dtoa.c b/dtoa.c
+index ac1be8d..9732a77 100644
+--- a/dtoa.c
++++ b/dtoa.c
+@@ -28,7 +28,6 @@
+ #include <string.h>
+ #include <assert.h>
+ #include <ctype.h>
+-#include <sys/time.h>
+ #include <math.h>
+ #include <setjmp.h>
+ 
 diff --git a/quickjs.c b/quickjs.c
 index fa5a7a9..4065d34 100644
 --- a/quickjs.c
