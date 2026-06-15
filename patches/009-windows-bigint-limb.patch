@@ -1,0 +1,13 @@
+diff --git a/quickjs.h b/quickjs.h
+index 476d735..b6b8ffb 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -64,7 +64,7 @@ typedef uint32_t JSAtom;
+ #define JS_NAN_BOXING
+ #endif
+ 
+-#if defined(__SIZEOF_INT128__) && (INTPTR_MAX >= INT64_MAX)
++#if defined(__SIZEOF_INT128__) && (INTPTR_MAX >= INT64_MAX) && !defined(_WIN32)
+ #define JS_LIMB_BITS 64
+ #else
+ #define JS_LIMB_BITS 32

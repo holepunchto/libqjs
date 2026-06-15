@@ -16,6 +16,7 @@ fetch_package(
     patches/006-portable-time.patch
     patches/007-windows-atomics.patch
     patches/008-windows-alloca.patch
+    patches/009-windows-bigint-limb.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)
