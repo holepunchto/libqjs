@@ -25,6 +25,9 @@
 #include <malloc.h>
 #endif
 
+#define JS_HANDLE_SCOPE_PAGE_SIZE 32
+
+typedef struct js_handle_scope_page_s js_handle_scope_page_t;
 typedef struct js_callback_s js_callback_t;
 typedef struct js_finalizer_s js_finalizer_t;
 typedef struct js_finalizer_list_s js_finalizer_list_t;
@@ -115,11 +118,15 @@ struct js_value_s {
   JSValue value;
 };
 
+struct js_handle_scope_page_s {
+  js_handle_scope_page_t *next;
+  size_t len;
+  js_value_t values[JS_HANDLE_SCOPE_PAGE_SIZE];
+};
+
 struct js_handle_scope_s {
   js_handle_scope_t *parent;
-  js_value_t **values;
-  size_t len;
-  size_t capacity;
+  js_handle_scope_page_t *page;
 };
 
 struct js_escapable_handle_scope_s {
@@ -957,9 +964,7 @@ js_open_handle_scope(js_env_t *env, js_handle_scope_t **result) {
   js_handle_scope_t *scope = malloc(sizeof(js_handle_scope_t));
 
   scope->parent = env->scope;
-  scope->values = NULL;
-  scope->len = 0;
-  scope->capacity = 0;
+  scope->page = NULL;
 
   env->scope = scope;
 
@@ -972,17 +977,21 @@ int
 js_close_handle_scope(js_env_t *env, js_handle_scope_t *scope) {
   // Allow continuing even with a pending exception
 
-  for (size_t i = 0; i < scope->len; i++) {
-    js_value_t *value = scope->values[i];
+  js_handle_scope_page_t *page = scope->page;
 
-    JS_FreeValue(env->context, value->value);
+  while (page) {
+    for (size_t i = page->len; i-- > 0;) {
+      JS_FreeValue(env->context, page->values[i].value);
+    }
 
-    free(value);
+    js_handle_scope_page_t *next = page->next;
+
+    free(page);
+
+    page = next;
   }
 
   env->scope = scope->parent;
-
-  if (scope->values) free(scope->values);
 
   free(scope);
 
@@ -999,31 +1008,32 @@ js_close_escapable_handle_scope(js_env_t *env, js_escapable_handle_scope_t *scop
   return js_close_handle_scope(env, (js_handle_scope_t *) scope);
 }
 
-static inline void
-js__attach_to_handle_scope(js_env_t *env, js_handle_scope_t *scope, js_value_t *value) {
+static inline js_value_t *
+js__create_handle(js_env_t *env, js_handle_scope_t *scope) {
   assert(scope);
 
-  if (scope->len >= scope->capacity) {
-    if (scope->capacity) scope->capacity *= 2;
-    else scope->capacity = 4;
+  js_handle_scope_page_t *page = scope->page;
 
-    scope->values = realloc(scope->values, scope->capacity * sizeof(js_value_t *));
+  if (page == NULL || page->len == JS_HANDLE_SCOPE_PAGE_SIZE) {
+    page = malloc(sizeof(js_handle_scope_page_t));
+    page->next = scope->page;
+    page->len = 0;
+
+    scope->page = page;
   }
 
-  scope->values[scope->len++] = value;
+  return &page->values[page->len++];
 }
 
 int
 js_escape_handle(js_env_t *env, js_escapable_handle_scope_t *scope, js_value_t *escapee, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, scope->parent);
 
   wrapper->value = JS_DupValue(env->context, escapee->value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, scope->parent, wrapper);
 
   return 0;
 }
@@ -1079,13 +1089,11 @@ int
 js_get_bindings(js_env_t *env, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_DupValue(env->context, env->bindings);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -1127,13 +1135,11 @@ js_run_script(js_env_t *env, const char *file, size_t len, int offset, js_value_
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = value;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -1262,13 +1268,11 @@ int
 js_get_module_namespace(js_env_t *env, js_module_t *module, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_GetModuleNamespace(env->context, module->definition);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -1400,13 +1404,11 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
     return 0;
   }
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = value;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -1548,13 +1550,11 @@ js_get_reference_value(js_env_t *env, js_ref_t *reference, js_value_t **result) 
 
   if (reference->finalized) *result = NULL;
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = JS_DupValue(env->context, reference->value);
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -1684,7 +1684,7 @@ js_define_class(js_env_t *env, const char *name, size_t len, js_function_cb cons
     free(static_properties);
   }
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = class;
 
@@ -1692,8 +1692,6 @@ js_define_class(js_env_t *env, const char *name, size_t len, js_function_cb cons
   JS_FreeValue(env->context, prototype);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2008,13 +2006,11 @@ js_create_delegate(js_env_t *env, const js_delegate_callbacks_t *callbacks, void
 
   JS_SetOpaque(object, delegate);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = object;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2154,13 +2150,11 @@ int
 js_create_int32(js_env_t *env, int32_t value, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewInt32(env->context, value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2169,13 +2163,11 @@ int
 js_create_uint32(js_env_t *env, uint32_t value, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewUint32(env->context, value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2184,13 +2176,11 @@ int
 js_create_int64(js_env_t *env, int64_t value, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewInt64(env->context, value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2199,13 +2189,11 @@ int
 js_create_double(js_env_t *env, double value, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewFloat64(env->context, value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2214,13 +2202,11 @@ int
 js_create_bigint_int64(js_env_t *env, int64_t value, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewBigInt64(env->context, value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2229,13 +2215,11 @@ int
 js_create_bigint_uint64(js_env_t *env, uint64_t value, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewBigUint64(env->context, value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2272,13 +2256,11 @@ js_create_string_utf8(js_env_t *env, const utf8_t *str, size_t len, js_value_t *
     return js__error(env);
   }
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = value;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2309,13 +2291,11 @@ js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value
     return js__error(env);
   }
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = value;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2346,13 +2326,11 @@ js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value
     return js__error(env);
   }
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = value;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2418,15 +2396,13 @@ js_create_symbol(js_env_t *env, js_value_t *description, js_value_t **result) {
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Symbol");
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   JSValue arg = description == NULL ? JS_NULL : description->value;
 
   wrapper->value = JS_Call(env->context, constructor, global, 1, &arg);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
@@ -2448,13 +2424,11 @@ int
 js_create_object(js_env_t *env, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewObject(env->context);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2519,15 +2493,13 @@ js_create_function(js_env_t *env, const char *name, size_t len, js_function_cb c
 
   JS_SetOpaque(external, callback);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewCFunctionData(env->context, js__on_function_call, 0, 0, 1, &external);
 
   JS_FreeValue(env->context, external);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2634,13 +2606,11 @@ js_create_function_with_source(js_env_t *env, const char *name, size_t name_len,
     return js__error(env);
   }
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = function;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2654,13 +2624,11 @@ int
 js_create_array(js_env_t *env, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewArray(env->context);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2672,15 +2640,13 @@ js_create_array_with_length(js_env_t *env, size_t len, js_value_t **result) {
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Array");
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   JSValue arg = JS_NewUint32(env->context, len);
 
   wrapper->value = JS_CallConstructor(env->context, constructor, 1, &arg);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   JS_FreeValue(env->context, arg);
   JS_FreeValue(env->context, constructor);
@@ -2716,13 +2682,11 @@ js_create_external(js_env_t *env, void *data, js_finalize_cb finalize_cb, void *
 
   JS_SetOpaque(external, finalizer);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = external;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2731,13 +2695,11 @@ int
 js_create_date(js_env_t *env, double time, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NewDate(env->context, time);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2749,7 +2711,7 @@ js_create_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "Error");
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   JSValue arg = message->value;
 
@@ -2762,8 +2724,6 @@ js_create_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t
   wrapper->value = error;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
@@ -2778,7 +2738,7 @@ js_create_type_error(js_env_t *env, js_value_t *code, js_value_t *message, js_va
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "TypeError");
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   JSValue arg = message->value;
 
@@ -2791,8 +2751,6 @@ js_create_type_error(js_env_t *env, js_value_t *code, js_value_t *message, js_va
   wrapper->value = error;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
@@ -2807,7 +2765,7 @@ js_create_range_error(js_env_t *env, js_value_t *code, js_value_t *message, js_v
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "RangeError");
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   JSValue arg = message->value;
 
@@ -2820,8 +2778,6 @@ js_create_range_error(js_env_t *env, js_value_t *code, js_value_t *message, js_v
   wrapper->value = error;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
@@ -2836,7 +2792,7 @@ js_create_syntax_error(js_env_t *env, js_value_t *code, js_value_t *message, js_
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "SyntaxError");
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   JSValue arg = message->value;
 
@@ -2849,8 +2805,6 @@ js_create_syntax_error(js_env_t *env, js_value_t *code, js_value_t *message, js_
   wrapper->value = error;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
@@ -2865,7 +2819,7 @@ js_create_reference_error(js_env_t *env, js_value_t *code, js_value_t *message, 
   JSValue global = JS_GetGlobalObject(env->context);
   JSValue constructor = JS_GetPropertyStr(env->context, global, "ReferenceError");
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   JSValue arg = message->value;
 
@@ -2879,8 +2833,6 @@ js_create_reference_error(js_env_t *env, js_value_t *code, js_value_t *message, 
 
   *result = wrapper;
 
-  js__attach_to_handle_scope(env, env->scope, wrapper);
-
   JS_FreeValue(env->context, constructor);
   JS_FreeValue(env->context, global);
 
@@ -2889,7 +2841,7 @@ js_create_reference_error(js_env_t *env, js_value_t *code, js_value_t *message, 
 
 int
 js_get_error_location(js_env_t *env, js_value_t *error, js_error_location_t *result) {
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_UNDEFINED;
 
@@ -2898,8 +2850,6 @@ js_get_error_location(js_env_t *env, js_value_t *error, js_error_location_t *res
   result->line = 0;
   result->column_start = -1;
   result->column_end = -1;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2910,7 +2860,7 @@ js_create_promise(js_env_t *env, js_deferred_t **deferred, js_value_t **promise)
 
   *deferred = malloc(sizeof(js_deferred_t));
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   JSValue functions[2];
 
@@ -2920,8 +2870,6 @@ js_create_promise(js_env_t *env, js_deferred_t **deferred, js_value_t **promise)
   (*deferred)->reject = functions[1];
 
   *promise = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -2982,13 +2930,11 @@ js_get_promise_result(js_env_t *env, js_value_t *promise, js_value_t **result) {
 
   assert(JS_PromiseState(env->context, promise->value) != JS_PROMISE_PENDING);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_PromiseResult(env->context, promise->value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3018,13 +2964,11 @@ js_create_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t **resul
 
   JSValue arraybuffer = JS_NewArrayBuffer(env->context, bytes, len, js__on_arraybuffer_finalize, NULL, false);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = arraybuffer;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 
@@ -3062,13 +3006,11 @@ js_create_arraybuffer_with_backing_store(js_env_t *env, js_arraybuffer_backing_s
 
   JSValue arraybuffer = JS_NewArrayBuffer(env->context, backing_store->data, backing_store->len, js__on_backed_arraybuffer_finalize, backing_store, false);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = arraybuffer;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3096,13 +3038,11 @@ js_create_unsafe_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t 
 
   JSValue arraybuffer = JS_NewArrayBuffer(env->context, bytes, len, js__on_unsafe_arraybuffer_finalize, NULL, false);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = arraybuffer;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 
@@ -3140,13 +3080,11 @@ js_create_external_arraybuffer(js_env_t *env, void *data, size_t len, js_finaliz
 
   JSValue arraybuffer = JS_NewArrayBuffer(env->context, (uint8_t *) data, len, js__on_external_arraybuffer_finalize, (void *) finalizer, false);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = arraybuffer;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3194,13 +3132,11 @@ js_create_sharedarraybuffer(js_env_t *env, size_t len, void **data, js_value_t *
 
   JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, header->data, header->len, NULL, NULL, true);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = sharedarraybuffer;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3229,13 +3165,11 @@ js_create_sharedarraybuffer_with_backing_store(js_env_t *env, js_arraybuffer_bac
 
   JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, backing_store->data, backing_store->len, NULL, NULL, true);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = sharedarraybuffer;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3255,13 +3189,11 @@ js_create_unsafe_sharedarraybuffer(js_env_t *env, size_t len, void **data, js_va
 
   JSValue sharedarraybuffer = JS_NewArrayBuffer(env->context, header->data, header->len, NULL, NULL, true);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = sharedarraybuffer;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3333,13 +3265,11 @@ js_create_typedarray(js_env_t *env, js_typedarray_type_t type, size_t len, js_va
 
   if (JS_IsException(typedarray)) return js__error(env);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = typedarray;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3360,13 +3290,11 @@ js_create_dataview(js_env_t *env, size_t len, js_value_t *arraybuffer, size_t of
 
   if (JS_IsException(typedarray)) return js__error(env);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = typedarray;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3377,13 +3305,11 @@ js_coerce_to_boolean(js_env_t *env, js_value_t *value, js_value_t **result) {
 
   JSValue boolean = JS_ToBoolean(env->context, value->value);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = boolean;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3396,13 +3322,11 @@ js_coerce_to_number(js_env_t *env, js_value_t *value, js_value_t **result) {
 
   if (JS_IsException(number)) return js__error(env);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = number;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3415,13 +3339,11 @@ js_coerce_to_string(js_env_t *env, js_value_t *value, js_value_t **result) {
 
   if (JS_IsException(string)) return js__error(env);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = string;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -3434,13 +3356,11 @@ js_coerce_to_object(js_env_t *env, js_value_t *value, js_value_t **result) {
 
   if (JS_IsException(object)) return js__error(env);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = object;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -4135,13 +4055,11 @@ int
 js_get_global(js_env_t *env, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_GetGlobalObject(env->context);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -4150,13 +4068,11 @@ int
 js_get_undefined(js_env_t *env, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_UNDEFINED;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -4165,13 +4081,11 @@ int
 js_get_null(js_env_t *env, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_NULL;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -4180,13 +4094,11 @@ int
 js_get_boolean(js_env_t *env, bool value, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = value ? JS_TRUE : JS_FALSE;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -4408,13 +4320,11 @@ js_get_array_elements(js_env_t *env, js_value_t *array, js_value_t **elements, s
       return js__error(env);
     }
 
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = value;
 
     elements[i] = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
 
     written++;
   }
@@ -4459,13 +4369,11 @@ int
 js_get_prototype(js_env_t *env, js_value_t *object, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_GetPrototype(env->context, object->value);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -4508,13 +4416,11 @@ js_get_property_names(js_env_t *env, js_value_t *object, js_value_t **result) {
 
   if (result == NULL) JS_FreeValue(env->context, array);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = array;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -4672,13 +4578,11 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
 
   if (result == NULL) JS_FreeValue(env->context, array);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = array;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -4718,13 +4622,11 @@ js_get_property(js_env_t *env, js_value_t *object, js_value_t *key, js_value_t *
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = value;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -4876,13 +4778,11 @@ js_get_named_property(js_env_t *env, js_value_t *object, const char *name, js_va
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = value;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -4999,13 +4899,11 @@ js_get_element(js_env_t *env, js_value_t *object, uint32_t index, js_value_t **r
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = value;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -5134,23 +5032,19 @@ js_get_callback_info(js_env_t *env, const js_callback_info_t *info, size_t *argc
     size_t i = 0, n = info->argc < *argc ? info->argc : *argc;
 
     for (; i < n; i++) {
-      js_value_t *wrapper = malloc(sizeof(js_value_t));
+      js_value_t *wrapper = js__create_handle(env, env->scope);
 
       wrapper->value = JS_DupValue(env->context, info->argv[i]);
 
       argv[i] = wrapper;
-
-      js__attach_to_handle_scope(env, env->scope, wrapper);
     }
 
     n = *argc;
 
     if (i < n) {
-      js_value_t *wrapper = malloc(sizeof(js_value_t));
+      js_value_t *wrapper = js__create_handle(env, env->scope);
 
       wrapper->value = JS_UNDEFINED;
-
-      js__attach_to_handle_scope(env, env->scope, wrapper);
 
       for (; i < n; i++) {
         argv[i] = wrapper;
@@ -5163,13 +5057,11 @@ js_get_callback_info(js_env_t *env, const js_callback_info_t *info, size_t *argc
   }
 
   if (receiver) {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = JS_DupValue(env->context, info->receiver);
 
     *receiver = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   if (data) {
@@ -5190,13 +5082,11 @@ int
 js_get_new_target(js_env_t *env, const js_callback_info_t *info, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = JS_DupValue(env->context, info->new_target);
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
@@ -5294,13 +5184,11 @@ js_get_typedarray_info(js_env_t *env, js_value_t *typedarray, js_typedarray_type
   }
 
   if (parraybuffer) {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = JS_DupValue(env->context, arraybuffer);
 
     *parraybuffer = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   if (poffset) {
@@ -5347,13 +5235,11 @@ js_get_dataview_info(js_env_t *env, js_value_t *dataview, void **pdata, size_t *
   }
 
   if (parraybuffer) {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = JS_DupValue(env->context, arraybuffer);
 
     *parraybuffer = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   if (poffset) {
@@ -5399,13 +5285,11 @@ js_call_function(js_env_t *env, js_value_t *recv, js_value_t *function, size_t a
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = value;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -5441,13 +5325,11 @@ js_call_function_with_checkpoint(js_env_t *env, js_value_t *receiver, js_value_t
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = value;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -5483,13 +5365,11 @@ js_new_instance(js_env_t *env, js_value_t *constructor, size_t argc, js_value_t 
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
-    js_value_t *wrapper = malloc(sizeof(js_value_t));
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
     wrapper->value = value;
 
     *result = wrapper;
-
-    js__attach_to_handle_scope(env, env->scope, wrapper);
   }
 
   return 0;
@@ -6255,13 +6135,11 @@ js_get_and_clear_last_exception(js_env_t *env, js_value_t **result) {
 
   if (JS_IsUninitialized(error)) return js_get_undefined(env, result);
 
-  js_value_t *wrapper = malloc(sizeof(js_value_t));
+  js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = error;
 
   *result = wrapper;
-
-  js__attach_to_handle_scope(env, env->scope, wrapper);
 
   return 0;
 }
