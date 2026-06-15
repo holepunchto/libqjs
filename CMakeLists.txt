@@ -13,6 +13,7 @@ fetch_package(
     patches/003-coercion.patch
     patches/004-new-symbol.patch
     patches/005-uncatchable-error.patch
+    patches/006-portable-time.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)
