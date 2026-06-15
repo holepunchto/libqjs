@@ -17,6 +17,7 @@ fetch_package(
     patches/007-windows-atomics.patch
     patches/008-windows-alloca.patch
     patches/009-windows-bigint-limb.patch
+    patches/010-windows-closure-type.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)
