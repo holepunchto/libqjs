@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index 9d81339..dba8c37 100644
+index 0b44c3d..b9278f6 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -1270,7 +1270,7 @@ static BOOL js_strict_eq2(JSContext *ctx, JSValue op1, JSValue op2,
@@ -20,7 +20,7 @@ index 9d81339..dba8c37 100644
  static int JS_SetPropertyValue(JSContext *ctx, JSValueConst this_obj,
                                 JSValue prop, JSValue val, int flags);
  static int JS_NumberIsInteger(JSContext *ctx, JSValueConst val);
-@@ -13145,7 +13145,7 @@ int JS_ToFloat64(JSContext *ctx, double *pres, JSValueConst val)
+@@ -13187,7 +13187,7 @@ int JS_ToFloat64(JSContext *ctx, double *pres, JSValueConst val)
      return JS_ToFloat64Free(ctx, pres, JS_DupValue(ctx, val));
  }
  
@@ -29,7 +29,7 @@ index 9d81339..dba8c37 100644
  {
      return JS_ToNumberFree(ctx, JS_DupValue(ctx, val));
  }
-@@ -39857,7 +39857,7 @@ static JSValue js_global_isFinite(JSContext *ctx, JSValueConst this_val,
+@@ -39894,7 +39894,7 @@ static JSValue js_global_isFinite(JSContext *ctx, JSValueConst this_val,
  
  /* Object class */
  
@@ -39,10 +39,10 @@ index 9d81339..dba8c37 100644
      int tag = JS_VALUE_GET_NORM_TAG(val);
      JSValue obj;
 diff --git a/quickjs.h b/quickjs.h
-index 0515cd2..b0af3f6 100644
+index d195f74..e50010a 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -742,6 +742,13 @@ int JS_ToBigInt64(JSContext *ctx, int64_t *pres, JSValueConst val);
+@@ -741,6 +741,13 @@ int JS_ToBigInt64(JSContext *ctx, int64_t *pres, JSValueConst val);
  /* same as JS_ToInt64() but allow BigInt */
  int JS_ToInt64Ext(JSContext *ctx, int64_t *pres, JSValueConst val);
  

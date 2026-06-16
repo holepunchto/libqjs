@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index dba8c37..2412db3 100644
+index b9278f6..010b38d 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -3514,7 +3514,7 @@ static JSAtom JS_NewAtomInt64(JSContext *ctx, int64_t n)
@@ -40,7 +40,7 @@ index dba8c37..2412db3 100644
  }
  
  #define ATOM_GET_STR_BUF_SIZE 64
-@@ -51424,7 +51444,7 @@ static JSValue js_symbol_constructor(JSContext *ctx, JSValueConst new_target,
+@@ -51461,7 +51481,7 @@ static JSValue js_symbol_constructor(JSContext *ctx, JSValueConst new_target,
              return JS_EXCEPTION;
          p = JS_VALUE_GET_STRING(str);
      }
@@ -49,7 +49,7 @@ index dba8c37..2412db3 100644
  }
  
  static JSValue js_thisSymbolValue(JSContext *ctx, JSValueConst this_val)
-@@ -51496,7 +51516,7 @@ static JSValue js_symbol_for(JSContext *ctx, JSValueConst this_val,
+@@ -51533,7 +51553,7 @@ static JSValue js_symbol_for(JSContext *ctx, JSValueConst this_val,
      str = JS_ToString(ctx, argv[0]);
      if (JS_IsException(str))
          return JS_EXCEPTION;
@@ -59,10 +59,10 @@ index dba8c37..2412db3 100644
  
  static JSValue js_symbol_keyFor(JSContext *ctx, JSValueConst this_val,
 diff --git a/quickjs.h b/quickjs.h
-index b0af3f6..f006af0 100644
+index e50010a..8133d38 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -755,6 +755,7 @@ static inline JSValue JS_NewString(JSContext *ctx, const char *str)
+@@ -754,6 +754,7 @@ static inline JSValue JS_NewString(JSContext *ctx, const char *str)
      return JS_NewStringLen(ctx, str, strlen(str));
  }
  JSValue JS_NewAtomString(JSContext *ctx, const char *str);

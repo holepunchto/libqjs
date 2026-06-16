@@ -291,7 +291,6 @@ list(APPEND skipped_tests
   create-external-sharedarraybuffer
   garbage-collection-tracking
   get-new-target
-  symbol-for
 
   # Not supported
   dynamic-import

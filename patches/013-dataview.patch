@@ -1,0 +1,53 @@
+diff --git a/quickjs.c b/quickjs.c
+index ee72610..4147ac9 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -60220,6 +60220,33 @@ static JSValue js_dataview_get_buffer(JSContext *ctx, JSValueConst this_val)
+     return JS_DupValue(ctx, JS_MKPTR(JS_TAG_OBJECT, ta->buffer));
+ }
+ 
++JSValue JS_NewDataView(JSContext *ctx, int argc, JSValueConst *argv)
++{
++    return js_dataview_constructor(ctx, JS_UNDEFINED, argc, argv);
++}
++
++/* Return the buffer associated to the DataView or an exception if it is
++   not a DataView or if the buffer is detached. pbyte_offset or
++   pbyte_length can be NULL. */
++JSValue JS_GetDataViewBuffer(JSContext *ctx, JSValueConst obj,
++                             size_t *pbyte_offset,
++                             size_t *pbyte_length)
++{
++    JSObject *p;
++    JSTypedArray *ta;
++    p = get_dataview(ctx, obj);
++    if (!p)
++        return JS_EXCEPTION;
++    if (dataview_is_oob(p))
++        return JS_ThrowTypeErrorArrayBufferOOB(ctx);
++    ta = p->u.typed_array;
++    if (pbyte_offset)
++        *pbyte_offset = ta->offset;
++    if (pbyte_length)
++        *pbyte_length = ta->length;
++    return JS_DupValue(ctx, JS_MKPTR(JS_TAG_OBJECT, ta->buffer));
++}
++
+ static JSValue js_dataview_get_byteLength(JSContext *ctx, JSValueConst this_val)
+ {
+     JSArrayBuffer *abuf;
+diff --git a/quickjs.h b/quickjs.h
+index c006805..8d8364c 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -932,6 +932,10 @@ JSValue JS_GetTypedArrayBuffer(JSContext *ctx, JSValueConst obj,
+                                size_t *pbyte_offset,
+                                size_t *pbyte_length,
+                                size_t *pbytes_per_element);
++JSValue JS_NewDataView(JSContext *ctx, int argc, JSValueConst *argv);
++JSValue JS_GetDataViewBuffer(JSContext *ctx, JSValueConst obj,
++                             size_t *pbyte_offset,
++                             size_t *pbyte_length);
+ typedef struct {
+     void *(*sab_alloc)(void *opaque, size_t size);
+     void (*sab_free)(void *opaque, void *ptr);

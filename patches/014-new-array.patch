@@ -1,0 +1,271 @@
+diff --git a/quickjs.c b/quickjs.c
+index 4147ac9..27183d9 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -5988,10 +5988,21 @@ JSValue JS_NewObjectProto(JSContext *ctx, JSValueConst proto)
+     return JS_NewObjectProtoClass(ctx, proto, JS_CLASS_OBJECT);
+ }
+ 
+-JSValue JS_NewArray(JSContext *ctx)
++JSValue JS_NewArray(JSContext *ctx, uint32_t len)
+ {
+-    return JS_NewObjectFromShape(ctx, js_dup_shape(ctx->array_shape),
+-                                 JS_CLASS_ARRAY, NULL);
++    JSValue obj;
++
++    obj = JS_NewObjectFromShape(ctx, js_dup_shape(ctx->array_shape),
++                                JS_CLASS_ARRAY, NULL);
++    if (JS_IsException(obj))
++        return obj;
++    if (len != 0) {
++        if (JS_SetProperty(ctx, obj, JS_ATOM_length, JS_NewUint32(ctx, len)) < 0) {
++            JS_FreeValue(ctx, obj);
++            return JS_EXCEPTION;
++        }
++    }
++    return obj;
+ }
+ 
+ JSValue JS_NewObject(JSContext *ctx)
+@@ -9767,7 +9778,7 @@ static JSValue js_allocate_fast_array(JSContext *ctx, int64_t len)
+     
+     if (len > INT32_MAX)
+         return JS_ThrowRangeError(ctx, "invalid array length");
+-    arr = JS_NewArray(ctx);
++    arr = JS_NewArray(ctx, 0);
+     if (JS_IsException(arr))
+         return arr;
+     if (len > 0) {
+@@ -9791,7 +9802,7 @@ static JSValue js_create_array(JSContext *ctx, int len, JSValueConst *tab)
+     JSObject *p;
+     int i;
+ 
+-    obj = JS_NewArray(ctx);
++    obj = JS_NewArray(ctx, 0);
+     if (JS_IsException(obj))
+         return JS_EXCEPTION;
+     if (len > 0) {
+@@ -9815,7 +9826,7 @@ static JSValue js_create_array_free(JSContext *ctx, int len, JSValue *tab)
+     JSObject *p;
+     int i;
+ 
+-    obj = JS_NewArray(ctx);
++    obj = JS_NewArray(ctx, 0);
+     if (JS_IsException(obj))
+         goto fail;
+     if (len > 0) {
+@@ -24590,7 +24601,7 @@ static __exception int js_parse_template(JSParseState *s, int call, int *argc)
+     if (call) {
+         /* Create a template object: an array of cooked strings */
+         /* Create an array of raw strings and store it to the raw property */
+-        template_object = JS_NewArray(ctx);
++        template_object = JS_NewArray(ctx, 0);
+         if (JS_IsException(template_object))
+             return -1;
+         //        pool_idx = s->cur_func->cpool_count;
+@@ -24598,7 +24609,7 @@ static __exception int js_parse_template(JSParseState *s, int call, int *argc)
+         JS_FreeValue(ctx, template_object);
+         if (ret)
+             return -1;
+-        raw_array = JS_NewArray(ctx);
++        raw_array = JS_NewArray(ctx, 0);
+         if (JS_IsException(raw_array))
+             return -1;
+         if (JS_DefinePropertyValue(ctx, template_object, JS_ATOM_raw,
+@@ -39192,7 +39203,7 @@ static JSValue JS_ReadArray(BCReaderState *s, int tag)
+     int ret, prop_flags;
+     BOOL is_template;
+ 
+-    obj = JS_NewArray(ctx);
++    obj = JS_NewArray(ctx, 0);
+     if (BC_add_object_ref(s, obj))
+         goto fail;
+     is_template = (tag == BC_TAG_TEMPLATE_OBJECT);
+@@ -40477,7 +40488,7 @@ static JSValue JS_GetOwnPropertyNames2(JSContext *ctx, JSValueConst obj1,
+     p = JS_VALUE_GET_OBJ(obj);
+     if (JS_GetOwnPropertyNamesInternal(ctx, &atoms, &len, p, flags & ~JS_GPN_ENUM_ONLY))
+         goto exception;
+-    r = JS_NewArray(ctx);
++    r = JS_NewArray(ctx, 0);
+     if (JS_IsException(r))
+         goto exception;
+     for(j = i = 0; i < len; i++) {
+@@ -40509,7 +40520,7 @@ static JSValue JS_GetOwnPropertyNames2(JSContext *ctx, JSValueConst obj1,
+                 goto exception;
+             break;
+         case JS_ITERATOR_KIND_KEY_AND_VALUE:
+-            val = JS_NewArray(ctx);
++            val = JS_NewArray(ctx, 0);
+             if (JS_IsException(val))
+                 goto exception;
+             key = JS_AtomToValue(ctx, atom);
+@@ -41503,7 +41514,7 @@ static JSValue iterator_to_array(JSContext *ctx, JSValueConst items)
+     next_method = JS_GetProperty(ctx, iter, JS_ATOM_next);
+     if (JS_IsException(next_method))
+         goto exception;
+-    r = JS_NewArray(ctx);
++    r = JS_NewArray(ctx, 0);
+     if (JS_IsException(r))
+         goto exception;
+     for (k = 0;; k++) {
+@@ -41823,7 +41834,7 @@ static JSValue js_array_from(JSContext *ctx, JSValueConst this_val,
+         if (JS_IsConstructor(ctx, this_val))
+             r = JS_CallConstructor(ctx, this_val, 0, NULL);
+         else
+-            r = JS_NewArray(ctx);
++            r = JS_NewArray(ctx, 0);
+         if (JS_IsException(r))
+             goto exception;
+         enum_obj = JS_GetIterator2(ctx, items, iter);
+@@ -41912,7 +41923,7 @@ static JSValue js_array_of(JSContext *ctx, JSValueConst this_val,
+         args[0] = JS_NewInt32(ctx, argc);
+         obj = JS_CallConstructor(ctx, this_val, 1, (JSValueConst *)args);
+     } else {
+-        obj = JS_NewArray(ctx);
++        obj = JS_NewArray(ctx, 0);
+     }
+     if (JS_IsException(obj))
+         return JS_EXCEPTION;
+@@ -42241,7 +42252,7 @@ static JSValue js_array_every(JSContext *ctx, JSValueConst this_val,
+             goto exception;
+         break;
+     case special_filter | special_TA:
+-        ret = JS_NewArray(ctx);
++        ret = JS_NewArray(ctx, 0);
+         if (JS_IsException(ret))
+             goto exception;
+         break;
+@@ -44357,7 +44368,7 @@ static JSValue js_iterator_proto_toArray(JSContext *ctx, JSValueConst this_val,
+     method = JS_GetProperty(ctx, this_val, JS_ATOM_next);
+     if (JS_IsException(method))
+         return JS_EXCEPTION;
+-    result = JS_NewArray(ctx);
++    result = JS_NewArray(ctx, 0);
+     if (JS_IsException(result))
+         goto exception;
+     for (idx = 0; /*empty*/; idx++) {
+@@ -46130,7 +46141,7 @@ static JSValue js_string_split(JSContext *ctx, JSValueConst this_val,
+     S = JS_ToString(ctx, O);
+     if (JS_IsException(S))
+         goto exception;
+-    A = JS_NewArray(ctx);
++    A = JS_NewArray(ctx, 0);
+     if (JS_IsException(A))
+         goto exception;
+     lengthA = 0;
+@@ -48171,7 +48182,7 @@ static JSValue js_regexp_exec(JSContext *ctx, JSValueConst this_val,
+                 goto fail;
+         }
+         if (re_flags & LRE_FLAG_INDICES) {
+-            indices = JS_NewArray(ctx);
++            indices = JS_NewArray(ctx, 0);
+             if (JS_IsException(indices))
+                 goto fail;
+             if (group_name_ptr) {
+@@ -48221,7 +48232,7 @@ static JSValue js_regexp_exec(JSContext *ctx, JSValueConst this_val,
+             if (!JS_IsUndefined(indices)) {
+                 val = JS_UNDEFINED;
+                 if (start != -1) {
+-                    val = JS_NewArray(ctx);
++                    val = JS_NewArray(ctx, 0);
+                     if (JS_IsException(val))
+                         goto fail;
+                     if (JS_DefinePropertyValueUint32(ctx, val, 0,
+@@ -48493,7 +48504,7 @@ static JSValue js_regexp_Symbol_match(JSContext *ctx, JSValueConst this_val,
+ 
+         if (JS_SetProperty(ctx, rx, JS_ATOM_lastIndex, JS_NewInt32(ctx, 0)) < 0)
+             goto exception;
+-        A = JS_NewArray(ctx);
++        A = JS_NewArray(ctx, 0);
+         if (JS_IsException(A))
+             goto exception;
+         n = 0;
+@@ -48933,7 +48944,7 @@ static JSValue js_regexp_Symbol_replace(JSContext *ctx, JSValueConst this_val,
+         /* ignore substition if going backward (can happen
+            with custom regexp object) */
+         JS_FreeValue(ctx, tab);
+-        tab = JS_NewArray(ctx);
++        tab = JS_NewArray(ctx, 0);
+         if (JS_IsException(tab))
+             goto exception;
+         if (JS_DefinePropertyValueInt64(ctx, tab, 0, JS_DupValue(ctx, matched),
+@@ -49121,7 +49132,7 @@ static JSValue js_regexp_Symbol_split(JSContext *ctx, JSValueConst this_val,
+     splitter = JS_CallConstructor(ctx, ctor, 2, args);
+     if (JS_IsException(splitter))
+         goto exception;
+-    A = JS_NewArray(ctx);
++    A = JS_NewArray(ctx, 0);
+     if (JS_IsException(A))
+         goto exception;
+     lengthA = 0;
+@@ -49544,7 +49555,7 @@ static JSValue json_parse_value(JSParseState *s, JSONParseRecord *pr)
+             
+             if (json_next_token(s))
+                 goto fail;
+-            val = JS_NewArray(ctx);
++            val = JS_NewArray(ctx, 0);
+             if (JS_IsException(val))
+                 goto fail;
+             if (pr) {
+@@ -50247,7 +50258,7 @@ JSValue JS_JSONStringify(JSContext *ctx, JSValueConst obj,
+     wrapper = JS_UNDEFINED;
+ 
+     string_buffer_init(ctx, jsc->b, 0);
+-    jsc->stack = JS_NewArray(ctx);
++    jsc->stack = JS_NewArray(ctx, 0);
+     if (JS_IsException(jsc->stack))
+         goto exception;
+     if (JS_IsFunction(ctx, replacer)) {
+@@ -50258,7 +50269,7 @@ JSValue JS_JSONStringify(JSContext *ctx, JSValueConst obj,
+             goto exception;
+         if (res) {
+             /* XXX: enumeration is not fully correct */
+-            jsc->property_list = JS_NewArray(ctx);
++            jsc->property_list = JS_NewArray(ctx, 0);
+             if (JS_IsException(jsc->property_list))
+                 goto exception;
+             if (js_get_length64(ctx, &n, replacer))
+@@ -52386,7 +52397,7 @@ static JSValue js_object_groupBy(JSContext *ctx, JSValueConst this_val,
+             goto exception;
+ 
+         if (JS_IsUndefined(prop)) {
+-            prop = JS_NewArray(ctx);
++            prop = JS_NewArray(ctx, 0);
+             if (JS_IsException(prop))
+                 goto exception;
+             if (is_map) {
+@@ -53989,10 +54000,10 @@ static JSValue js_promise_all(JSContext *ctx, JSValueConst this_val,
+         next_method = JS_GetProperty(ctx, iter, JS_ATOM_next);
+         if (JS_IsException(next_method))
+             goto fail_reject;
+-        values = JS_NewArray(ctx);
++        values = JS_NewArray(ctx, 0);
+         if (JS_IsException(values))
+             goto fail_reject;
+-        resolve_element_env = JS_NewArray(ctx);
++        resolve_element_env = JS_NewArray(ctx, 0);
+         if (JS_IsException(resolve_element_env))
+             goto fail_reject;
+         /* remainingElementsCount field */
+@@ -59850,7 +59861,7 @@ static JSValue js_array_from_iterator(JSContext *ctx, uint32_t *plen,
+     uint32_t k;
+ 
+     *plen = 0;
+-    arr = JS_NewArray(ctx);
++    arr = JS_NewArray(ctx, 0);
+     if (JS_IsException(arr))
+         return arr;
+     iter = JS_GetIterator2(ctx, obj, method);
+diff --git a/quickjs.h b/quickjs.h
+index 8d8364c..9b5e159 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -783,7 +783,7 @@ JS_BOOL JS_IsFunction(JSContext* ctx, JSValueConst val);
+ JS_BOOL JS_IsConstructor(JSContext* ctx, JSValueConst val);
+ JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val);
+ 
+-JSValue JS_NewArray(JSContext *ctx);
++JSValue JS_NewArray(JSContext *ctx, uint32_t len);
+ int JS_IsArray(JSContext *ctx, JSValueConst val);
+ JS_BOOL JS_IsArrayBuffer(JSValueConst val);
+ JS_BOOL JS_IsSharedArrayBuffer(JSValueConst val);
