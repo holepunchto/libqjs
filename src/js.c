@@ -6220,7 +6220,10 @@ js_get_heap_statistics(js_env_t *env, js_heap_statistics_t *result) {
 
   result->total_heap_size = (size_t) usage.malloc_size;
   result->used_heap_size = (size_t) usage.memory_used_size;
-  result->external_memory = (size_t) env->external_memory;
+
+  if (result->version >= 1) {
+    result->external_memory = (size_t) env->external_memory;
+  }
 
   return 0;
 }
