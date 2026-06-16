@@ -11,7 +11,7 @@ index ac1be8d..9732a77 100644
  #include <setjmp.h>
  
 diff --git a/quickjs.c b/quickjs.c
-index fa5a7a9..4065d34 100644
+index 6b2f5e9..afe0d7f 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -28,7 +28,6 @@
@@ -22,7 +22,7 @@ index fa5a7a9..4065d34 100644
  #include <time.h>
  #include <fenv.h>
  #include <math.h>
-@@ -47145,9 +47144,9 @@ static uint64_t xorshift64star(uint64_t *pstate)
+@@ -47294,9 +47293,9 @@ static uint64_t xorshift64star(uint64_t *pstate)
  
  static void js_random_init(JSContext *ctx)
  {
@@ -35,7 +35,7 @@ index fa5a7a9..4065d34 100644
      /* the state must be non zero */
      if (ctx->random_state == 0)
          ctx->random_state = 1;
-@@ -55168,9 +55167,9 @@ static JSValue get_date_string(JSContext *ctx, JSValueConst this_val,
+@@ -55317,9 +55316,9 @@ static JSValue get_date_string(JSContext *ctx, JSValueConst this_val,
  
  /* OS dependent: return the UTC time in ms since 1970. */
  static int64_t date_now(void) {

@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index 2412db3..423de36 100644
+index 010b38d..6b2f5e9 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -1005,6 +1005,7 @@ struct JSObject {
@@ -10,7 +10,7 @@ index 2412db3..423de36 100644
      uint16_t class_id; /* see JS_CLASS_x */
      /* count the number of weak references to this object. The object
         structure is freed only if header.ref_count = 0 and
-@@ -5715,6 +5716,7 @@ static JSValue JS_NewObjectFromShape(JSContext *ctx, JSShape *sh, JSClassID clas
+@@ -5757,6 +5758,7 @@ static JSValue JS_NewObjectFromShape(JSContext *ctx, JSShape *sh, JSClassID clas
      p->has_immutable_prototype = 0;
      p->tmp_mark = 0;
      p->is_HTMLDDA = 0;
@@ -18,7 +18,7 @@ index 2412db3..423de36 100644
      p->weakref_count = 0;
      p->u.opaque = NULL;
      p->shape = sh;
-@@ -11103,6 +11105,25 @@ void JS_SetUncatchableException(JSContext *ctx, BOOL flag)
+@@ -11145,6 +11147,25 @@ void JS_SetUncatchableException(JSContext *ctx, BOOL flag)
      ctx->rt->current_exception_is_uncatchable = flag;
  }
  
@@ -44,7 +44,7 @@ index 2412db3..423de36 100644
  void JS_SetOpaque(JSValue obj, void *opaque)
  {
     JSObject *p;
-@@ -20640,7 +20661,8 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
+@@ -20677,7 +20698,8 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
          sf->cur_pc = pc;
          build_backtrace(ctx, rt->current_exception, NULL, 0, 0, 0);
      }
@@ -55,7 +55,7 @@ index 2412db3..423de36 100644
              JSValue val = *--sp;
              JS_FreeValue(ctx, val);
 diff --git a/quickjs.h b/quickjs.h
-index f006af0..7172dc3 100644
+index 8133d38..18cf918 100644
 --- a/quickjs.h
 +++ b/quickjs.h
 @@ -667,6 +667,8 @@ static inline JS_BOOL JS_IsObject(JSValueConst v)

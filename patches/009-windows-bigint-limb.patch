@@ -1,5 +1,5 @@
 diff --git a/quickjs.h b/quickjs.h
-index 476d735..b6b8ffb 100644
+index 18cf918..15bcb15 100644
 --- a/quickjs.h
 +++ b/quickjs.h
 @@ -64,7 +64,7 @@ typedef uint32_t JSAtom;

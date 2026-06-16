@@ -1,0 +1,70 @@
+diff --git a/quickjs.c b/quickjs.c
+index 0ad3d7a..ee72610 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -7780,9 +7780,46 @@ static BOOL is_backtrace_needed(JSContext *ctx, JSValueConst obj)
+     return TRUE;
+ }
+ 
+-JSValue JS_NewError(JSContext *ctx)
++static JSValue JS_NewError2(JSContext *ctx, JSValueConst proto,
++                            const char *message)
+ {
+-    return JS_NewObjectClass(ctx, JS_CLASS_ERROR);
++    JSValue obj;
++
++    obj = JS_NewObjectProtoClass(ctx, proto, JS_CLASS_ERROR);
++    if (JS_IsException(obj))
++        return obj;
++    if (message) {
++        JS_DefinePropertyValue(ctx, obj, JS_ATOM_message,
++                               JS_NewString(ctx, message),
++                               JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
++    }
++    build_backtrace(ctx, obj, NULL, 0, 0, 0);
++    return obj;
++}
++
++JSValue JS_NewError(JSContext *ctx, const char *message)
++{
++    return JS_NewError2(ctx, ctx->class_proto[JS_CLASS_ERROR], message);
++}
++
++JSValue JS_NewTypeError(JSContext *ctx, const char *message)
++{
++    return JS_NewError2(ctx, ctx->native_error_proto[JS_TYPE_ERROR], message);
++}
++
++JSValue JS_NewRangeError(JSContext *ctx, const char *message)
++{
++    return JS_NewError2(ctx, ctx->native_error_proto[JS_RANGE_ERROR], message);
++}
++
++JSValue JS_NewSyntaxError(JSContext *ctx, const char *message)
++{
++    return JS_NewError2(ctx, ctx->native_error_proto[JS_SYNTAX_ERROR], message);
++}
++
++JSValue JS_NewReferenceError(JSContext *ctx, const char *message)
++{
++    return JS_NewError2(ctx, ctx->native_error_proto[JS_REFERENCE_ERROR], message);
+ }
+ 
+ static JSValue JS_ThrowError2(JSContext *ctx, JSErrorEnum error_num,
+diff --git a/quickjs.h b/quickjs.h
+index b20e18a..c006805 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -672,7 +672,11 @@ void JS_SetUncatchableError(JSContext *ctx, JSValueConst val);
+ JSValue JS_GetException(JSContext *ctx);
+ JS_BOOL JS_HasException(JSContext *ctx);
+ JS_BOOL JS_IsError(JSContext *ctx, JSValueConst val);
+-JSValue JS_NewError(JSContext *ctx);
++JSValue JS_NewError(JSContext *ctx, const char *message);
++JSValue JS_NewTypeError(JSContext *ctx, const char *message);
++JSValue JS_NewRangeError(JSContext *ctx, const char *message);
++JSValue JS_NewSyntaxError(JSContext *ctx, const char *message);
++JSValue JS_NewReferenceError(JSContext *ctx, const char *message);
+ JSValue __js_printf_like(2, 3) JS_ThrowSyntaxError(JSContext *ctx, const char *fmt, ...);
+ JSValue __js_printf_like(2, 3) JS_ThrowTypeError(JSContext *ctx, const char *fmt, ...);
+ JSValue __js_printf_like(2, 3) JS_ThrowReferenceError(JSContext *ctx, const char *fmt, ...);

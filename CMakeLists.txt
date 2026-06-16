@@ -18,6 +18,10 @@ fetch_package(
     patches/008-windows-alloca.patch
     patches/009-windows-bigint-limb.patch
     patches/010-windows-closure-type.patch
+    patches/011-typed-array-type.patch
+    patches/012-new-error.patch
+    patches/013-dataview.patch
+    patches/014-new-array.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)

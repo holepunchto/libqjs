@@ -2393,31 +2393,48 @@ int
 js_create_symbol(js_env_t *env, js_value_t *description, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Symbol");
+  const char *str = description == NULL ? NULL : JS_ToCString(env->context, description->value);
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
-  JSValue arg = description == NULL ? JS_NULL : description->value;
+  wrapper->value = JS_NewSymbol(env->context, str, false);
 
-  wrapper->value = JS_Call(env->context, constructor, global, 1, &arg);
+  if (str) JS_FreeCString(env->context, str);
 
   *result = wrapper;
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   return 0;
 }
 
 int
 js_symbol_for(js_env_t *env, const char *description, size_t len, js_value_t **result) {
-  int err;
+  if (JS_HasException(env->context)) return js__error(env);
 
-  err = js_throw_error(env, NULL, "Unsupported operation");
-  assert(err == 0);
+  JSValue symbol;
 
-  return js__error(env);
+  if (len == (size_t) -1) {
+    symbol = JS_NewSymbol(env->context, description, true);
+  } else {
+    char *copy = malloc(len + 1);
+
+    memcpy(copy, description, len);
+
+    copy[len] = '\0';
+
+    symbol = JS_NewSymbol(env->context, copy, true);
+
+    free(copy);
+  }
+
+  if (JS_IsException(symbol)) return js__error(env);
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = symbol;
+
+  *result = wrapper;
+
+  return 0;
 }
 
 int
@@ -2626,7 +2643,7 @@ js_create_array(js_env_t *env, js_value_t **result) {
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
-  wrapper->value = JS_NewArray(env->context);
+  wrapper->value = JS_NewArray(env->context, 0);
 
   *result = wrapper;
 
@@ -2637,20 +2654,11 @@ int
 js_create_array_with_length(js_env_t *env, size_t len, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Array");
-
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
-  JSValue arg = JS_NewUint32(env->context, len);
-
-  wrapper->value = JS_CallConstructor(env->context, constructor, 1, &arg);
+  wrapper->value = JS_NewArray(env->context, len);
 
   *result = wrapper;
-
-  JS_FreeValue(env->context, arg);
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   return 0;
 }
@@ -2708,25 +2716,21 @@ int
 js_create_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Error");
+  const char *str = JS_ToCString(env->context, message->value);
 
-  js_value_t *wrapper = js__create_handle(env, env->scope);
+  JSValue error = JS_NewError(env->context, str);
 
-  JSValue arg = message->value;
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  if (str) JS_FreeCString(env->context, str);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
   }
 
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
   wrapper->value = error;
 
   *result = wrapper;
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   return 0;
 }
@@ -2735,25 +2739,21 @@ int
 js_create_type_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "TypeError");
+  const char *str = JS_ToCString(env->context, message->value);
 
-  js_value_t *wrapper = js__create_handle(env, env->scope);
+  JSValue error = JS_NewTypeError(env->context, str);
 
-  JSValue arg = message->value;
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  if (str) JS_FreeCString(env->context, str);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
   }
 
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
   wrapper->value = error;
 
   *result = wrapper;
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   return 0;
 }
@@ -2762,25 +2762,21 @@ int
 js_create_range_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "RangeError");
+  const char *str = JS_ToCString(env->context, message->value);
 
-  js_value_t *wrapper = js__create_handle(env, env->scope);
+  JSValue error = JS_NewRangeError(env->context, str);
 
-  JSValue arg = message->value;
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  if (str) JS_FreeCString(env->context, str);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
   }
 
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
   wrapper->value = error;
 
   *result = wrapper;
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   return 0;
 }
@@ -2789,25 +2785,21 @@ int
 js_create_syntax_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "SyntaxError");
+  const char *str = JS_ToCString(env->context, message->value);
 
-  js_value_t *wrapper = js__create_handle(env, env->scope);
+  JSValue error = JS_NewSyntaxError(env->context, str);
 
-  JSValue arg = message->value;
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  if (str) JS_FreeCString(env->context, str);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
   }
 
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
   wrapper->value = error;
 
   *result = wrapper;
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   return 0;
 }
@@ -2816,25 +2808,21 @@ int
 js_create_reference_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t **result) {
   // Allow continuing even with a pending exception
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "ReferenceError");
+  const char *str = JS_ToCString(env->context, message->value);
 
-  js_value_t *wrapper = js__create_handle(env, env->scope);
+  JSValue error = JS_NewReferenceError(env->context, str);
 
-  JSValue arg = message->value;
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  if (str) JS_FreeCString(env->context, str);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
   }
 
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
   wrapper->value = error;
 
   *result = wrapper;
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   return 0;
 }
@@ -3232,36 +3220,32 @@ int
 js_create_typedarray(js_env_t *env, js_typedarray_type_t type, size_t len, js_value_t *arraybuffer, size_t offset, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor;
+  JSTypedArrayEnum array_type;
 
   switch (type) {
-#define V(class, type) \
+#define V(enum, type) \
   case type: \
-    constructor = JS_GetPropertyStr(env->context, global, class); \
+    array_type = enum; \
     break;
 
-    V("Int8Array", js_int8array);
-    V("Uint8Array", js_uint8array);
-    V("Uint8ClampedArray", js_uint8clampedarray);
-    V("Int16Array", js_int16array);
-    V("Uint16Array", js_uint16array);
-    V("Int32Array", js_int32array);
-    V("Uint32Array", js_uint32array);
-    V("Float16Array", js_float16array);
-    V("Float32Array", js_float32array);
-    V("Float64Array", js_float64array);
-    V("BigInt64Array", js_bigint64array);
-    V("BigUint64Array", js_biguint64array);
+    V(JS_TYPED_ARRAY_INT8, js_int8array);
+    V(JS_TYPED_ARRAY_UINT8, js_uint8array);
+    V(JS_TYPED_ARRAY_UINT8C, js_uint8clampedarray);
+    V(JS_TYPED_ARRAY_INT16, js_int16array);
+    V(JS_TYPED_ARRAY_UINT16, js_uint16array);
+    V(JS_TYPED_ARRAY_INT32, js_int32array);
+    V(JS_TYPED_ARRAY_UINT32, js_uint32array);
+    V(JS_TYPED_ARRAY_FLOAT16, js_float16array);
+    V(JS_TYPED_ARRAY_FLOAT32, js_float32array);
+    V(JS_TYPED_ARRAY_FLOAT64, js_float64array);
+    V(JS_TYPED_ARRAY_BIG_INT64, js_bigint64array);
+    V(JS_TYPED_ARRAY_BIG_UINT64, js_biguint64array);
 #undef V
   }
 
   JSValue argv[3] = {arraybuffer->value, JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
 
-  JSValue typedarray = JS_CallConstructor(env->context, constructor, 3, argv);
-
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
+  JSValue typedarray = JS_NewTypedArray(env->context, 3, argv, array_type);
 
   if (JS_IsException(typedarray)) return js__error(env);
 
@@ -3278,21 +3262,15 @@ int
 js_create_dataview(js_env_t *env, size_t len, js_value_t *arraybuffer, size_t offset, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "DataView");
-
   JSValue argv[3] = {arraybuffer->value, JS_NewInt64(env->context, offset), JS_NewInt64(env->context, len)};
 
-  JSValue typedarray = JS_CallConstructor(env->context, constructor, 3, argv);
+  JSValue dataview = JS_NewDataView(env->context, 3, argv);
 
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
-
-  if (JS_IsException(typedarray)) return js__error(env);
+  if (JS_IsException(dataview)) return js__error(env);
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
-  wrapper->value = typedarray;
+  wrapper->value = dataview;
 
   *result = wrapper;
 
@@ -3734,17 +3712,7 @@ int
 js_is_sharedarraybuffer(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "SharedArrayBuffer");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_IsSharedArrayBuffer(value->value);
 
   return 0;
 }
@@ -3753,45 +3721,7 @@ int
 js_is_typedarray(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-
-#define V(class) \
-  { \
-    JSValue constructor = JS_GetPropertyStr(env->context, global, class); \
-\
-    if (JS_IsInstanceOf(env->context, value->value, constructor)) { \
-      *result = true; \
-\
-      JS_FreeValue(env->context, constructor); \
-\
-      goto done; \
-    } \
-\
-    JS_FreeValue(env->context, constructor); \
-  }
-
-    V("Int8Array");
-    V("Uint8Array");
-    V("Uint8ClampedArray");
-    V("Int16Array");
-    V("Uint16Array");
-    V("Int32Array");
-    V("Uint32Array");
-    V("Float16Array");
-    V("Float32Array");
-    V("Float64Array");
-    V("BigInt64Array");
-    V("BigUint64Array");
-#undef V
-
-    *result = false;
-
-  done:
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_IsTypedArray(value->value);
 
   return 0;
 }
@@ -3800,17 +3730,7 @@ int
 js_is_int8array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Int8Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_INT8;
 
   return 0;
 }
@@ -3819,17 +3739,7 @@ int
 js_is_uint8array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint8Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_UINT8;
 
   return 0;
 }
@@ -3838,17 +3748,7 @@ int
 js_is_uint8clampedarray(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint8ClampedArray");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_UINT8C;
 
   return 0;
 }
@@ -3857,17 +3757,7 @@ int
 js_is_int16array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Int16Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_INT16;
 
   return 0;
 }
@@ -3876,17 +3766,7 @@ int
 js_is_uint16array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint16Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_UINT16;
 
   return 0;
 }
@@ -3895,17 +3775,7 @@ int
 js_is_int32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Int32Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_INT32;
 
   return 0;
 }
@@ -3914,17 +3784,7 @@ int
 js_is_uint32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Uint32Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_UINT32;
 
   return 0;
 }
@@ -3933,17 +3793,7 @@ int
 js_is_float16array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Float16Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_FLOAT16;
 
   return 0;
 }
@@ -3952,17 +3802,7 @@ int
 js_is_float32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Float32Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_FLOAT32;
 
   return 0;
 }
@@ -3971,17 +3811,7 @@ int
 js_is_float64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "Float64Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_FLOAT64;
 
   return 0;
 }
@@ -3990,17 +3820,7 @@ int
 js_is_bigint64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "BigInt64Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_BIG_INT64;
 
   return 0;
 }
@@ -4009,17 +3829,7 @@ int
 js_is_biguint64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  if (JS_IsObject(value->value)) {
-    JSValue global = JS_GetGlobalObject(env->context);
-    JSValue constructor = JS_GetPropertyStr(env->context, global, "BigUint64Array");
-
-    *result = JS_IsInstanceOf(env->context, value->value, constructor);
-
-    JS_FreeValue(env->context, constructor);
-    JS_FreeValue(env->context, global);
-  } else {
-    *result = false;
-  }
+  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_BIG_UINT64;
 
   return 0;
 }
@@ -4405,7 +4215,7 @@ js_get_property_names(js_env_t *env, js_value_t *object, js_value_t **result) {
     return js__error(env);
   }
 
-  JSValue array = JS_NewArray(env->context);
+  JSValue array = JS_NewArray(env->context, 0);
 
   for (uint32_t i = 0; i < len; i++) {
     err = JS_SetPropertyUint32(env->context, array, i, JS_AtomToValue(env->context, properties[i].atom));
@@ -4519,7 +4329,7 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
     return js__error(env);
   }
 
-  JSValue array = JS_NewArray(env->context);
+  JSValue array = JS_NewArray(env->context, 0);
   uint32_t j = 0;
 
   for (uint32_t i = 0; i < len; i++) {
@@ -5138,39 +4948,26 @@ js_get_typedarray_info(js_env_t *env, js_value_t *typedarray, js_typedarray_type
   JSValue arraybuffer = JS_GetTypedArrayBuffer(env->context, typedarray->value, &offset, &byte_len, &bytes_per_element);
 
   if (ptype) {
-    JSValue global = JS_GetGlobalObject(env->context);
+    switch (JS_GetTypedArrayType(env->context, typedarray->value)) {
+#define V(enum, type) \
+  case enum: \
+    *ptype = type; \
+    break;
 
-#define V(class, type) \
-  { \
-    JSValue constructor = JS_GetPropertyStr(env->context, global, class); \
-\
-    if (JS_IsInstanceOf(env->context, typedarray->value, constructor)) { \
-      *ptype = type; \
-\
-      JS_FreeValue(env->context, constructor); \
-\
-      goto done; \
-    } \
-\
-    JS_FreeValue(env->context, constructor); \
-  }
-
-    V("Int8Array", js_int8array);
-    V("Uint8Array", js_uint8array);
-    V("Uint8ClampedArray", js_uint8clampedarray);
-    V("Int16Array", js_int16array);
-    V("Uint16Array", js_uint16array);
-    V("Int32Array", js_int32array);
-    V("Uint32Array", js_uint32array);
-    V("Float16Array", js_float16array);
-    V("Float32Array", js_float32array);
-    V("Float64Array", js_float64array);
-    V("BigInt64Array", js_bigint64array);
-    V("BigUint64Array", js_biguint64array);
+      V(JS_TYPED_ARRAY_INT8, js_int8array);
+      V(JS_TYPED_ARRAY_UINT8, js_uint8array);
+      V(JS_TYPED_ARRAY_UINT8C, js_uint8clampedarray);
+      V(JS_TYPED_ARRAY_INT16, js_int16array);
+      V(JS_TYPED_ARRAY_UINT16, js_uint16array);
+      V(JS_TYPED_ARRAY_INT32, js_int32array);
+      V(JS_TYPED_ARRAY_UINT32, js_uint32array);
+      V(JS_TYPED_ARRAY_FLOAT16, js_float16array);
+      V(JS_TYPED_ARRAY_FLOAT32, js_float32array);
+      V(JS_TYPED_ARRAY_FLOAT64, js_float64array);
+      V(JS_TYPED_ARRAY_BIG_INT64, js_bigint64array);
+      V(JS_TYPED_ARRAY_BIG_UINT64, js_biguint64array);
 #undef V
-
-  done:
-    JS_FreeValue(env->context, global);
+    }
   }
 
   if (pdata) {
@@ -5204,21 +5001,9 @@ int
 js_get_dataview_info(js_env_t *env, js_value_t *dataview, void **pdata, size_t *plen, js_value_t **parraybuffer, size_t *poffset) {
   // Allow continuing even with a pending exception
 
-  size_t offset;
+  size_t offset, byte_len;
 
-  JSValue arraybuffer;
-
-  if (pdata || poffset) {
-    JSValue value = JS_GetPropertyStr(env->context, dataview->value, "byteOffset");
-
-    JS_ToInt64(env->context, (int64_t *) &offset, value);
-
-    JS_FreeValue(env->context, value);
-  }
-
-  if (pdata || parraybuffer) {
-    arraybuffer = JS_GetPropertyStr(env->context, dataview->value, "buffer");
-  }
+  JSValue arraybuffer = JS_GetDataViewBuffer(env->context, dataview->value, &offset, &byte_len);
 
   if (pdata) {
     size_t size;
@@ -5227,11 +5012,7 @@ js_get_dataview_info(js_env_t *env, js_value_t *dataview, void **pdata, size_t *
   }
 
   if (plen) {
-    JSValue value = JS_GetPropertyStr(env->context, dataview->value, "byteLength");
-
-    JS_ToInt64(env->context, (int64_t *) plen, value);
-
-    JS_FreeValue(env->context, value);
+    *plen = byte_len;
   }
 
   if (parraybuffer) {
@@ -5246,9 +5027,7 @@ js_get_dataview_info(js_env_t *env, js_value_t *dataview, void **pdata, size_t *
     *poffset = offset;
   }
 
-  if (pdata || parraybuffer) {
-    JS_FreeValue(env->context, arraybuffer);
-  }
+  JS_FreeValue(env->context, arraybuffer);
 
   return 0;
 }
@@ -5832,20 +5611,11 @@ int
 js_throw_error(js_env_t *env, const char *code, const char *message) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "Error");
-
-  JSValue arg = JS_NewString(env->context, message);
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  JSValue error = JS_NewError(env->context, message);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
   }
-
-  JS_FreeValue(env->context, arg);
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   JS_Throw(env->context, error);
 
@@ -5890,20 +5660,11 @@ int
 js_throw_type_error(js_env_t *env, const char *code, const char *message) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "TypeError");
-
-  JSValue arg = JS_NewString(env->context, message);
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  JSValue error = JS_NewTypeError(env->context, message);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
   }
-
-  JS_FreeValue(env->context, arg);
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   JS_Throw(env->context, error);
 
@@ -5948,20 +5709,11 @@ int
 js_throw_range_error(js_env_t *env, const char *code, const char *message) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "RangeError");
-
-  JSValue arg = JS_NewString(env->context, message);
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  JSValue error = JS_NewRangeError(env->context, message);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
   }
-
-  JS_FreeValue(env->context, arg);
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   JS_Throw(env->context, error);
 
@@ -6006,20 +5758,11 @@ int
 js_throw_syntax_error(js_env_t *env, const char *code, const char *message) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "SyntaxError");
-
-  JSValue arg = JS_NewString(env->context, message);
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  JSValue error = JS_NewSyntaxError(env->context, message);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
   }
-
-  JS_FreeValue(env->context, arg);
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   JS_Throw(env->context, error);
 
@@ -6064,20 +5807,11 @@ int
 js_throw_reference_error(js_env_t *env, const char *code, const char *message) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSValue global = JS_GetGlobalObject(env->context);
-  JSValue constructor = JS_GetPropertyStr(env->context, global, "ReferenceError");
-
-  JSValue arg = JS_NewString(env->context, message);
-
-  JSValue error = JS_CallConstructor(env->context, constructor, 1, &arg);
+  JSValue error = JS_NewReferenceError(env->context, message);
 
   if (code) {
     JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
   }
-
-  JS_FreeValue(env->context, arg);
-  JS_FreeValue(env->context, constructor);
-  JS_FreeValue(env->context, global);
 
   JS_Throw(env->context, error);
 

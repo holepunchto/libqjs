@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index fa5a7a9..38aa2d9 100644
+index 8484663..4dded97 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -40,6 +40,20 @@
+@@ -39,6 +39,20 @@
  #include <malloc_np.h>
  #endif
  

@@ -1,0 +1,31 @@
+diff --git a/quickjs.c b/quickjs.c
+index 2aa7d6e..0ad3d7a 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -3987,6 +3987,14 @@ JS_BOOL JS_IsModuleNamespace(JSValueConst v)
+     return JS_GetClassID(v) == JS_CLASS_MODULE_NS;
+ }
+ 
++int JS_GetTypedArrayType(JSContext *ctx, JSValueConst obj)
++{
++    JSClassID class_id = JS_GetClassID(obj);
++    if (class_id >= JS_CLASS_UINT8C_ARRAY && class_id <= JS_CLASS_FLOAT64_ARRAY)
++        return class_id - JS_CLASS_UINT8C_ARRAY;
++    return -1;
++}
++
+ BOOL JS_IsRegisteredClass(JSRuntime *rt, JSClassID class_id)
+ {
+     return (class_id < rt->class_count &&
+diff --git a/quickjs.h b/quickjs.h
+index 15bcb15..b20e18a 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -923,6 +923,7 @@ typedef enum JSTypedArrayEnum {
+ 
+ JSValue JS_NewTypedArray(JSContext *ctx, int argc, JSValueConst *argv,
+                          JSTypedArrayEnum array_type);
++int JS_GetTypedArrayType(JSContext *ctx, JSValueConst obj);
+ JSValue JS_GetTypedArrayBuffer(JSContext *ctx, JSValueConst obj,
+                                size_t *pbyte_offset,
+                                size_t *pbyte_length,
