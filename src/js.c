@@ -91,6 +91,9 @@ struct js_env_s {
   JSContext *context;
   JSValue bindings;
 
+  JSValue default_module_id;
+  JSAtom function_id_key;
+
   int64_t external_memory;
 
   js_module_resolver_t *resolvers;
@@ -137,6 +140,7 @@ struct js_module_s {
   JSContext *context;
   JSValue source;
   JSValue bytecode;
+  JSValue id;
   JSModuleDef *definition;
   js_module_meta_cb meta;
   void *meta_data;
@@ -733,6 +737,8 @@ js__on_handle_close(uv_handle_t *handle) {
 
 static void
 js__close_env(js_env_t *env) {
+  JS_FreeValue(env->context, env->default_module_id);
+  JS_FreeAtom(env->context, env->function_id_key);
   JS_FreeValue(env->context, env->bindings);
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
@@ -807,6 +813,14 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   env->runtime = runtime;
   env->context = JS_NewContext(runtime);
   env->bindings = JS_NewObject(env->context);
+
+  env->default_module_id = JS_NULL;
+
+  JSValue function_id_key = JS_NewSymbol(env->context, "__function_id", false);
+
+  env->function_id_key = JS_ValueToAtom(env->context, function_id_key);
+
+  JS_FreeValue(env->context, function_id_key);
 
   env->external_memory = 0;
 
@@ -1162,6 +1176,11 @@ js_create_module(js_env_t *env, const char *name, size_t len, int offset, js_val
     memcpy(module->name, name, len);
   }
 
+  // Mint a unique identifier for the module so it can be recovered as the
+  // referrer of any dynamic import().
+
+  module->id = JS_NewSymbol(env->context, module->name, false);
+
   *result = module;
 
   return 0;
@@ -1213,6 +1232,11 @@ js_create_synthetic_module(js_env_t *env, const char *name, size_t len, js_value
     memcpy(module->name, name, len);
   }
 
+  // Mint a unique identifier for the module so it can be recovered as the
+  // referrer of any dynamic import().
+
+  module->id = JS_NewSymbol(env->context, module->name, false);
+
   for (size_t i = 0; i < names_len; i++) {
     const char *str = JS_ToCString(env->context, export_names[i]->value);
 
@@ -1241,6 +1265,7 @@ js_delete_module(js_env_t *env, js_module_t *module) {
 
   JS_FreeValue(env->context, module->source);
   JS_FreeValue(env->context, module->bytecode);
+  JS_FreeValue(env->context, module->id);
 
   JS_FreeContext(module->context);
 
@@ -1255,6 +1280,44 @@ js_get_module_name(js_env_t *env, js_module_t *module, const char **result) {
   // Allow continuing even with a pending exception
 
   *result = module->name;
+
+  return 0;
+}
+
+// Returns the identifier shared by all compilation units that do not carry one
+// of their own, such as scripts run with `js_run_script()`. The identifier is
+// created lazily and remains stable for the lifetime of the environment.
+static inline JSValue
+js__default_module_id(js_env_t *env) {
+  if (JS_IsNull(env->default_module_id)) {
+    env->default_module_id = JS_NewSymbol(env->context, "module", false);
+  }
+
+  return env->default_module_id;
+}
+
+int
+js_get_module_id(js_env_t *env, js_module_t *module, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = JS_DupValue(env->context, module->id);
+
+  *result = wrapper;
+
+  return 0;
+}
+
+int
+js_get_default_module_id(js_env_t *env, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = JS_DupValue(env->context, js__default_module_id(env));
+
+  *result = wrapper;
 
   return 0;
 }
@@ -2618,9 +2681,42 @@ js_create_function_with_source(js_env_t *env, const char *name, size_t name_len,
     return js__error(env);
   }
 
+  // Mint a unique identifier for the function and stash it on the function so
+  // it can be recovered as the referrer of any dynamic import().
+
+  JSValue id = JS_NewSymbol(env->context, file, false);
+
+  JS_DefinePropertyValue(env->context, function, env->function_id_key, id, 0);
+
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = function;
+
+  *result = wrapper;
+
+  return 0;
+}
+
+int
+js_get_function_id(js_env_t *env, js_value_t *function, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  // Recover the identifier stamped onto the function at creation time.
+  // Functions not compiled with `js_create_function_with_source()` carry no
+  // identifier of their own and are attributed to the environment's default
+  // identifier.
+
+  JSValue id = JS_GetProperty(env->context, function->value, env->function_id_key);
+
+  if (!JS_IsSymbol(id)) {
+    JS_FreeValue(env->context, id);
+
+    id = JS_DupValue(env->context, js__default_module_id(env));
+  }
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = id;
 
   *result = wrapper;
 
