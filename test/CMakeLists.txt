@@ -203,8 +203,13 @@ list(APPEND tests
   many-large-allocs
   many-small-allocs
   prepare-script
+  prepare-script-id
+  prepare-script-ignore-return
   prepare-script-in-context
+  prepare-script-multiple-contexts
   prepare-script-run-multiple
+  prepare-script-syntax-error
+  prepare-script-throw
   promise-rejection
   promise-rejection-unhandled
   promise-rejection-unhandled-reentrant

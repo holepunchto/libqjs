@@ -1271,6 +1271,15 @@ js_delete_script(js_env_t *env, js_script_t *script) {
 }
 
 int
+js_get_script_name(js_env_t *env, js_script_t *script, const char **result) {
+  // Allow continuing even with a pending exception
+
+  *result = script->name;
+
+  return 0;
+}
+
+int
 js_get_script_id(js_env_t *env, js_script_t *script, js_value_t **result) {
   // Allow continuing even with a pending exception
 
