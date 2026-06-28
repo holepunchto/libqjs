@@ -147,6 +147,12 @@ struct js_module_s {
   char *name;
 };
 
+struct js_script_s {
+  JSValue bytecode;
+  JSValue id;
+  char *name;
+};
+
 struct js_module_resolver_s {
   js_module_t *module;
   js_module_resolve_cb cb;
@@ -1150,6 +1156,138 @@ js_run_script(js_env_t *env, const char *file, size_t len, int offset, js_value_
 
     *result = wrapper;
   }
+
+  return 0;
+}
+
+int
+js_prepare_script(js_env_t *env, const char *file, size_t len, int offset, js_value_t *source, js_script_t **result) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  char *name;
+
+  if (file == NULL) {
+    name = strdup("");
+  } else if (len == (size_t) -1) {
+    name = strdup(file);
+  } else {
+    name = malloc(len + 1);
+    name[len] = '\0';
+
+    memcpy(name, file, len);
+  }
+
+  size_t str_len;
+  const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
+
+  // Compile without running, yielding the bytecode as a reusable function
+  // object that can be evaluated later with `js_run_prepared_script()`.
+
+  JSValue bytecode = JS_Eval(
+    env->context,
+    str,
+    str_len,
+    name,
+    JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY
+  );
+
+  JS_FreeCString(env->context, str);
+
+  if (JS_IsException(bytecode)) {
+    free(name);
+
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__uncaught_exception(env, error);
+    }
+
+    return js__error(env);
+  }
+
+  js_script_t *script = malloc(sizeof(js_script_t));
+
+  script->bytecode = bytecode;
+  script->name = name;
+
+  // Mint a unique identifier for the script so it can be recovered as the
+  // referrer of any dynamic import().
+
+  script->id = JS_NewSymbol(env->context, name, false);
+
+  *result = script;
+
+  return 0;
+}
+
+int
+js_run_prepared_script(js_env_t *env, js_script_t *script, js_value_t **result) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  env->depth++;
+
+  // `JS_EvalFunction()` consumes the bytecode, so duplicate it to keep the
+  // script runnable more than once.
+
+  JSValue value = JS_EvalFunction(env->context, JS_DupValue(env->context, script->bytecode));
+
+  if (env->depth == 1) js__run_microtasks(env);
+
+  env->depth--;
+
+  if (JS_IsException(value)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__uncaught_exception(env, error);
+    }
+
+    return js__error(env);
+  }
+
+  if (result == NULL) JS_FreeValue(env->context, value);
+  else {
+    js_value_t *wrapper = js__create_handle(env, env->scope);
+
+    wrapper->value = value;
+
+    *result = wrapper;
+  }
+
+  return 0;
+}
+
+int
+js_delete_script(js_env_t *env, js_script_t *script) {
+  // Allow continuing even with a pending exception
+
+  JS_FreeValue(env->context, script->bytecode);
+  JS_FreeValue(env->context, script->id);
+
+  free(script->name);
+  free(script);
+
+  return 0;
+}
+
+int
+js_get_script_name(js_env_t *env, js_script_t *script, const char **result) {
+  // Allow continuing even with a pending exception
+
+  *result = script->name;
+
+  return 0;
+}
+
+int
+js_get_script_id(js_env_t *env, js_script_t *script, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = JS_DupValue(env->context, script->id);
+
+  *result = wrapper;
 
   return 0;
 }
