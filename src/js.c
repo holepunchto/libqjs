@@ -5367,13 +5367,11 @@ js__on_microtask(JSContext *context, int argc, JSValueConst *argv) {
 
 int
 js_queue_microtask(js_env_t *env, js_value_t *function) {
-  if (JS_HasException(env->context)) return js__error(env);
+  // Allow continuing even with a pending exception
 
-  int err = JS_EnqueueJob(env->context, js__on_microtask, 1, &function->value);
+  JS_EnqueueJob(env->context, js__on_microtask, 1, &function->value);
 
   if (env->depth == 0) js__run_microtasks(env);
-
-  if (err < 0) return js__error(env);
 
   return 0;
 }
@@ -5391,7 +5389,7 @@ js__on_microtask_with_callback(JSContext *context, int argc, JSValueConst *argv)
 
 int
 js_queue_microtask_with_callback(js_env_t *env, js_task_cb cb, void *data) {
-  if (JS_HasException(env->context)) return js__error(env);
+  // Allow continuing even with a pending exception
 
   js_microtask_t *task = malloc(sizeof(js_microtask_t));
 
@@ -5403,17 +5401,11 @@ js_queue_microtask_with_callback(js_env_t *env, js_task_cb cb, void *data) {
 
   JS_SetOpaque(external, task);
 
-  int err = JS_EnqueueJob(env->context, js__on_microtask_with_callback, 1, &external);
+  JS_EnqueueJob(env->context, js__on_microtask_with_callback, 1, &external);
 
   JS_FreeValue(env->context, external);
 
   if (env->depth == 0) js__run_microtasks(env);
-
-  if (err < 0) {
-    free(task);
-
-    return js__error(env);
-  }
 
   return 0;
 }
