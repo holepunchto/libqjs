@@ -2646,6 +2646,19 @@ js_create_object(js_env_t *env, js_value_t **result) {
   return 0;
 }
 
+int
+js_create_object_with_prototype(js_env_t *env, js_value_t *prototype, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = JS_NewObjectProto(env->context, prototype->value);
+
+  *result = wrapper;
+
+  return 0;
+}
+
 static void
 js__on_function_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
@@ -4413,6 +4426,17 @@ js_get_prototype(js_env_t *env, js_value_t *object, js_value_t **result) {
   wrapper->value = JS_GetPrototype(env->context, object->value);
 
   *result = wrapper;
+
+  return 0;
+}
+
+int
+js_set_prototype(js_env_t *env, js_value_t *object, js_value_t *prototype) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int success = JS_SetPrototype(env->context, object->value, prototype->value);
+
+  if (success < 0) return js__error(env);
 
   return 0;
 }
