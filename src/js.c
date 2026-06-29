@@ -29,6 +29,7 @@
 
 typedef struct js_handle_scope_page_s js_handle_scope_page_t;
 typedef struct js_callback_s js_callback_t;
+typedef struct js_microtask_s js_microtask_t;
 typedef struct js_finalizer_s js_finalizer_t;
 typedef struct js_finalizer_list_s js_finalizer_list_t;
 typedef struct js_delegate_s js_delegate_t;
@@ -211,6 +212,12 @@ struct js_callback_s {
   void *data;
 };
 
+struct js_microtask_s {
+  js_env_t *env;
+  js_task_cb cb;
+  void *data;
+};
+
 struct js_callback_info_s {
   js_callback_t *callback;
   int argc;
@@ -317,6 +324,12 @@ static JSClassDef js__constructor_class = {
   .finalizer = js__on_constructor_finalize,
 };
 
+static JSClassID js__microtask_class_id;
+
+static JSClassDef js__microtask_class = {
+  .class_name = "Microtask",
+};
+
 static int
 js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descriptor, JSValueConst object, JSAtom property);
 
@@ -353,6 +366,7 @@ js_create_platform(uv_loop_t *loop, const js_platform_options_t *options, js_pla
   JS_NewClassID(&js__function_class_id);
   JS_NewClassID(&js__constructor_class_id);
   JS_NewClassID(&js__delegate_class_id);
+  JS_NewClassID(&js__microtask_class_id);
 
   js_platform_t *platform = malloc(sizeof(js_platform_t));
 
@@ -867,6 +881,9 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   assert(err == 0);
 
   err = JS_NewClass(runtime, js__delegate_class_id, &js__delegate_class);
+  assert(err == 0);
+
+  err = JS_NewClass(runtime, js__microtask_class_id, &js__microtask_class);
   assert(err == 0);
 
   err = uv_prepare_init(loop, &env->prepare);
@@ -5338,6 +5355,64 @@ js_call_function_with_checkpoint(js_env_t *env, js_value_t *receiver, js_value_t
     wrapper->value = value;
 
     *result = wrapper;
+  }
+
+  return 0;
+}
+
+static JSValue
+js__on_microtask(JSContext *context, int argc, JSValueConst *argv) {
+  return JS_Call(context, argv[0], JS_UNDEFINED, 0, NULL);
+}
+
+int
+js_queue_microtask(js_env_t *env, js_value_t *function) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err = JS_EnqueueJob(env->context, js__on_microtask, 1, &function->value);
+
+  if (env->depth == 0) js__run_microtasks(env);
+
+  if (err < 0) return js__error(env);
+
+  return 0;
+}
+
+static JSValue
+js__on_microtask_with_callback(JSContext *context, int argc, JSValueConst *argv) {
+  js_microtask_t *task = (js_microtask_t *) JS_GetOpaque(argv[0], js__microtask_class_id);
+
+  task->cb(task->env, task->data);
+
+  free(task);
+
+  return JS_UNDEFINED;
+}
+
+int
+js_queue_microtask_with_callback(js_env_t *env, js_task_cb cb, void *data) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  js_microtask_t *task = malloc(sizeof(js_microtask_t));
+
+  task->env = env;
+  task->cb = cb;
+  task->data = data;
+
+  JSValue external = JS_NewObjectClass(env->context, js__microtask_class_id);
+
+  JS_SetOpaque(external, task);
+
+  int err = JS_EnqueueJob(env->context, js__on_microtask_with_callback, 1, &external);
+
+  JS_FreeValue(env->context, external);
+
+  if (env->depth == 0) js__run_microtasks(env);
+
+  if (err < 0) {
+    free(task);
+
+    return js__error(env);
   }
 
   return 0;
