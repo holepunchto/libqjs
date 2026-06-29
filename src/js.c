@@ -2659,6 +2659,27 @@ js_create_object_with_prototype(js_env_t *env, js_value_t *prototype, js_value_t
   return 0;
 }
 
+int
+js_create_object_with_properties(js_env_t *env, js_value_t *prototype, js_value_t *const property_names[], js_value_t *const property_values[], size_t property_count, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = JS_NewObjectProto(env->context, prototype->value);
+
+  for (size_t i = 0; i < property_count; i++) {
+    JSAtom atom = JS_ValueToAtom(env->context, property_names[i]->value);
+
+    JS_SetProperty(env->context, wrapper->value, atom, JS_DupValue(env->context, property_values[i]->value));
+
+    JS_FreeAtom(env->context, atom);
+  }
+
+  *result = wrapper;
+
+  return 0;
+}
+
 static void
 js__on_function_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
