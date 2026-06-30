@@ -570,6 +570,8 @@ static inline void
 js__run_microtasks(js_env_t *env) {
   int err;
 
+  env->depth++;
+
   for (;;) {
     JSContext *context;
 
@@ -606,6 +608,8 @@ js__run_microtasks(js_env_t *env) {
 
     js__run_microtasks(env);
   }
+
+  env->depth--;
 }
 
 static void
