@@ -4483,6 +4483,59 @@ js_set_prototype(js_env_t *env, js_value_t *object, js_value_t *prototype) {
   return 0;
 }
 
+static inline int
+js__set_integrity_level(js_env_t *env, js_value_t *object, const char *method) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  JSValue global = JS_GetGlobalObject(env->context);
+
+  JSValue constructor = JS_GetPropertyStr(env->context, global, "Object");
+
+  JS_FreeValue(env->context, global);
+
+  if (JS_IsException(constructor)) return js__error(env);
+
+  JSValue function = JS_GetPropertyStr(env->context, constructor, method);
+
+  JS_FreeValue(env->context, constructor);
+
+  if (JS_IsException(function)) return js__error(env);
+
+  env->depth++;
+
+  JSValue result = JS_Call(env->context, function, JS_UNDEFINED, 1, &object->value);
+
+  JS_FreeValue(env->context, function);
+
+  if (env->depth == 1) js__run_microtasks(env);
+
+  env->depth--;
+
+  if (JS_IsException(result)) {
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__uncaught_exception(env, error);
+    }
+
+    return js__error(env);
+  }
+
+  JS_FreeValue(env->context, result);
+
+  return 0;
+}
+
+int
+js_seal(js_env_t *env, js_value_t *object) {
+  return js__set_integrity_level(env, object, "seal");
+}
+
+int
+js_freeze(js_env_t *env, js_value_t *object) {
+  return js__set_integrity_level(env, object, "freeze");
+}
+
 int
 js_get_property_names(js_env_t *env, js_value_t *object, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
