@@ -1,0 +1,35 @@
+diff --git a/quickjs.c b/quickjs.c
+index 27183d9..eb8c78c 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -37381,10 +37381,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
+     fun_obj = js_create_function(ctx, fd);
+     if (JS_IsException(fun_obj))
+         goto fail1;
+-    /* Could add a flag to avoid resolution if necessary */
++    /* Resolution of module imports can be deferred to a later
++       JS_ResolveModule() call via JS_EVAL_FLAG_DEFER_RESOLUTION. */
+     if (m) {
+         m->func_obj = fun_obj;
+-        if (js_resolve_module(ctx, m) < 0)
++        if (!(flags & JS_EVAL_FLAG_DEFER_RESOLUTION) &&
++            js_resolve_module(ctx, m) < 0)
+             goto fail1;
+         fun_obj = JS_NewModuleValue(ctx, m);
+     }
+diff --git a/quickjs.h b/quickjs.h
+index 9b5e159..cb8038d 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -340,6 +340,11 @@ static inline JSValue __JS_NewShortBigInt(JSContext *ctx, int64_t d)
+    JS_TAG_FUNCTION_BYTECODE or JS_TAG_MODULE tag. It can be executed
+    with JS_EvalFunction(). */
+ #define JS_EVAL_FLAG_COMPILE_ONLY (1 << 5)
++/* do not resolve module imports at compile time. The compiled module is
++   returned unresolved; the caller must resolve its imports later with
++   JS_ResolveModule() before evaluation. Only meaningful together with
++   JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY. */
++#define JS_EVAL_FLAG_DEFER_RESOLUTION (1 << 4)
+ /* don't include the stack frames before this eval in the Error() backtraces */
+ #define JS_EVAL_FLAG_BACKTRACE_BARRIER (1 << 6)
+ /* allow top-level await in normal script. JS_Eval() returns a

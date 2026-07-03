@@ -22,6 +22,7 @@ fetch_package(
     patches/012-new-error.patch
     patches/013-dataview.patch
     patches/014-new-array.patch
+    patches/015-defer-module-resolution.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)
