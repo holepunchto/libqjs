@@ -139,7 +139,6 @@ struct js_escapable_handle_scope_s {
 
 struct js_module_s {
   JSContext *context;
-  JSValue source;
   JSValue bytecode;
   JSValue id;
   JSModuleDef *definition;
@@ -449,16 +448,17 @@ js__on_resolve_module(JSContext *context, const char *name, void *opaque) {
 
     if (module == NULL) goto done;
 
-    if (module->definition == NULL) {
-      err = js_instantiate_module(
-        env,
-        module,
-        resolver->cb,
-        resolver->data
-      );
+    // Resolve the dependency's own imports under its referrer frame before
+    // returning it, so nested imports are attributed to the correct referrer.
 
-      if (err < 0) goto done;
-    }
+    err = js_instantiate_module(
+      env,
+      module,
+      resolver->cb,
+      resolver->data
+    );
+
+    if (err < 0) goto done;
 
     definition = module->definition;
   } else {
@@ -1317,23 +1317,52 @@ int
 js_create_module(js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, js_module_meta_cb cb, void *data, js_module_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  char *module_name;
+
+  if (len == (size_t) -1) {
+    module_name = strdup(name);
+  } else {
+    module_name = malloc(len + 1);
+    module_name[len] = '\0';
+
+    memcpy(module_name, name, len);
+  }
+
+  size_t str_len;
+  const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
+
+  // Compile the module without resolving its imports or evaluating it.
+
+  JSValue bytecode = JS_Eval(
+    env->context,
+    str,
+    str_len,
+    module_name,
+    JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY | JS_EVAL_FLAG_DEFER_RESOLUTION
+  );
+
+  JS_FreeCString(env->context, str);
+
+  if (JS_IsException(bytecode)) {
+    free(module_name);
+
+    if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__uncaught_exception(env, error);
+    }
+
+    return js__error(env);
+  }
+
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = JS_DupContext(env->context);
-  module->source = JS_DupValue(env->context, source->value);
-  module->bytecode = JS_NULL;
-  module->definition = NULL;
+  module->bytecode = bytecode;
+  module->definition = (JSModuleDef *) JS_VALUE_GET_PTR(bytecode);
   module->meta = cb;
   module->meta_data = data;
-
-  if (len == (size_t) -1) {
-    module->name = strdup(name);
-  } else {
-    module->name = malloc(len + 1);
-    module->name[len] = '\0';
-
-    memcpy(module->name, name, len);
-  }
+  module->name = module_name;
 
   // Mint a unique identifier for the module so it can be recovered as the
   // referrer of any dynamic import().
@@ -1376,7 +1405,6 @@ js_create_synthetic_module(js_env_t *env, const char *name, size_t len, js_value
   js_module_t *module = malloc(sizeof(js_module_t));
 
   module->context = JS_DupContext(env->context);
-  module->source = JS_NULL;
   module->bytecode = JS_NULL;
   module->definition = JS_NewCModule(env->context, name, js__on_evaluate_module);
   module->meta = NULL;
@@ -1422,7 +1450,6 @@ int
 js_delete_module(js_env_t *env, js_module_t *module) {
   // Allow continuing even with a pending exception
 
-  JS_FreeValue(env->context, module->source);
   JS_FreeValue(env->context, module->bytecode);
   JS_FreeValue(env->context, module->id);
 
@@ -1520,7 +1547,9 @@ int
 js_instantiate_module(js_env_t *env, js_module_t *module, js_module_resolve_cb cb, void *data) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  if (JS_IsNull(module->source)) return 0;
+  // Synthetic modules carry no bytecode and have nothing to resolve.
+
+  if (JS_IsNull(module->bytecode)) return 0;
 
   js_module_resolver_t resolver = {
     .module = module,
@@ -1531,26 +1560,20 @@ js_instantiate_module(js_env_t *env, js_module_t *module, js_module_resolve_cb c
 
   env->resolvers = &resolver;
 
-  size_t str_len;
-  const char *str = JS_ToCStringLen(env->context, &str_len, module->source);
+  // Resolve the module's imports, driving the resolve callback; evaluation is
+  // deferred to `js_run_module()`.
 
   env->depth++;
 
-  JSValue bytecode = JS_Eval(
-    env->context,
-    str,
-    str_len,
-    module->name,
-    JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
-  );
-
-  JS_FreeCString(env->context, str);
+  int success = JS_ResolveModule(env->context, module->bytecode);
 
   if (env->depth == 1) js__run_microtasks(env);
 
   env->depth--;
 
-  if (JS_IsException(bytecode)) {
+  env->resolvers = resolver.next;
+
+  if (success < 0) {
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
@@ -1559,12 +1582,6 @@ js_instantiate_module(js_env_t *env, js_module_t *module, js_module_resolve_cb c
 
     return js__error(env);
   }
-
-  module->bytecode = bytecode;
-
-  module->definition = (JSModuleDef *) JS_VALUE_GET_PTR(bytecode);
-
-  env->resolvers = resolver.next;
 
   return 0;
 }
