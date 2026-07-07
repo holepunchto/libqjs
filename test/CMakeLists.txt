@@ -68,6 +68,8 @@ list(APPEND tests
   create-function-with-source
   create-int64
   create-module-import-missing
+  create-module-with-code-cache
+  create-module-with-code-cache-rejected
   create-object-with-prototype
   create-object-with-properties
   create-promise-reject
@@ -91,6 +93,7 @@ list(APPEND tests
   create-string-utf8
   create-string-utf8-with-null
   create-string-utf16le
+  create-synthetic-module-code-cache
   create-threadsafe-function
   create-threadsafe-function-with-callback
   create-threadsafe-function-with-context
@@ -221,6 +224,8 @@ list(APPEND tests
   prepare-script-run-multiple
   prepare-script-syntax-error
   prepare-script-throw
+  prepare-script-with-code-cache
+  prepare-script-with-code-cache-rejected
   promise-rejection
   promise-rejection-handled-reentrant-deferred
   promise-rejection-unhandled
@@ -281,6 +286,10 @@ list(APPEND skipped_tests
   # Not supported
   atomics-wait-timeout
   atomics-wait-timeout-notify
+
+  # Not supported
+  create-module-with-code-cache-rejected
+  prepare-script-with-code-cache-rejected
 
   # Not supported
   create-typed-function
