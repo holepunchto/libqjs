@@ -94,6 +94,7 @@ struct js_env_s {
 
   JSValue default_module_id;
   JSAtom function_id_key;
+  JSAtom function_bytecode_key;
 
   int64_t external_memory;
 
@@ -763,6 +764,7 @@ static void
 js__close_env(js_env_t *env) {
   JS_FreeValue(env->context, env->default_module_id);
   JS_FreeAtom(env->context, env->function_id_key);
+  JS_FreeAtom(env->context, env->function_bytecode_key);
   JS_FreeValue(env->context, env->bindings);
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
@@ -845,6 +847,12 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   env->function_id_key = JS_ValueToAtom(env->context, function_id_key);
 
   JS_FreeValue(env->context, function_id_key);
+
+  JSValue function_bytecode_key = JS_NewSymbol(env->context, "__function_bytecode", false);
+
+  env->function_bytecode_key = JS_ValueToAtom(env->context, function_bytecode_key);
+
+  JS_FreeValue(env->context, function_bytecode_key);
 
   env->external_memory = 0;
 
@@ -1183,7 +1191,14 @@ js_run_script(js_env_t *env, const char *file, size_t len, int offset, js_value_
 
 int
 js_prepare_script(js_env_t *env, const char *file, size_t len, int offset, js_value_t *source, js_script_t **result) {
+  return js_prepare_script_with_code_cache(env, file, len, offset, source, NULL, 0, NULL, result);
+}
+
+int
+js_prepare_script_with_code_cache(js_env_t *env, const char *file, size_t len, int offset, js_value_t *source, const void *cached_data, size_t cached_data_len, bool *cache_rejected, js_script_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
+
+  if (cache_rejected) *cache_rejected = false;
 
   char *name;
 
@@ -1198,32 +1213,50 @@ js_prepare_script(js_env_t *env, const char *file, size_t len, int offset, js_va
     memcpy(name, file, len);
   }
 
-  size_t str_len;
-  const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
+  JSValue bytecode;
 
-  // Compile without running, yielding the bytecode as a reusable function
-  // object that can be evaluated later with `js_run_prepared_script()`.
+  bool loaded = false;
 
-  JSValue bytecode = JS_Eval(
-    env->context,
-    str,
-    str_len,
-    name,
-    JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY
-  );
+  if (cached_data != NULL) {
+    bytecode = JS_ReadObject(env->context, (const uint8_t *) cached_data, cached_data_len, JS_READ_OBJ_BYTECODE);
 
-  JS_FreeCString(env->context, str);
+    if (JS_IsException(bytecode)) {
+      JS_FreeValue(env->context, JS_GetException(env->context));
 
-  if (JS_IsException(bytecode)) {
-    free(name);
-
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
+      if (cache_rejected) *cache_rejected = true;
+    } else {
+      loaded = true;
     }
+  }
 
-    return js__error(env);
+  if (!loaded) {
+    size_t str_len;
+    const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
+
+    // Compile without running, yielding the bytecode as a reusable function
+    // object that can be evaluated later with `js_run_prepared_script()`.
+
+    bytecode = JS_Eval(
+      env->context,
+      str,
+      str_len,
+      name,
+      JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY
+    );
+
+    JS_FreeCString(env->context, str);
+
+    if (JS_IsException(bytecode)) {
+      free(name);
+
+      if (env->depth == 0) {
+        JSValue error = JS_GetException(env->context);
+
+        js__uncaught_exception(env, error);
+      }
+
+      return js__error(env);
+    }
   }
 
   js_script_t *script = malloc(sizeof(js_script_t));
@@ -1237,6 +1270,44 @@ js_prepare_script(js_env_t *env, const char *file, size_t len, int offset, js_va
   script->id = JS_NewSymbol(env->context, name, false);
 
   *result = script;
+
+  return 0;
+}
+
+int
+js_create_script_code_cache(js_env_t *env, js_script_t *script, void **data, size_t *len) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  size_t size;
+  uint8_t *buffer = JS_WriteObject(env->context, &size, script->bytecode, JS_WRITE_OBJ_BYTECODE);
+
+  if (buffer == NULL) {
+    if (!JS_HasException(env->context)) {
+      err = js_throw_error(env, NULL, "Failed to serialize the script code cache");
+      assert(err == 0);
+    } else if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__uncaught_exception(env, error);
+    }
+
+    return js__error(env);
+  }
+
+  // `JS_WriteObject()` hands back a buffer owned by QuickJS that must be
+  // released with `js_free()`. Copy it into a plain `malloc()` buffer so the
+  // caller can release it with `free()`.
+
+  void *copy = malloc(size);
+
+  memcpy(copy, buffer, size);
+
+  js_free(env->context, buffer);
+
+  *data = copy;
+  *len = size;
 
   return 0;
 }
@@ -1315,7 +1386,14 @@ js_get_script_id(js_env_t *env, js_script_t *script, js_value_t **result) {
 
 int
 js_create_module(js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, js_module_meta_cb cb, void *data, js_module_t **result) {
+  return js_create_module_with_code_cache(env, name, len, offset, source, NULL, 0, NULL, cb, data, result);
+}
+
+int
+js_create_module_with_code_cache(js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, const void *cached_data, size_t cached_data_len, bool *cache_rejected, js_module_meta_cb cb, void *data, js_module_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
+
+  if (cache_rejected) *cache_rejected = false;
 
   char *module_name;
 
@@ -1328,31 +1406,55 @@ js_create_module(js_env_t *env, const char *name, size_t len, int offset, js_val
     memcpy(module_name, name, len);
   }
 
-  size_t str_len;
-  const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
+  JSValue bytecode;
+  bool loaded = false;
 
-  // Compile the module without resolving its imports or evaluating it.
+  if (cached_data != NULL) {
+    // Read the compiled-but-unresolved module straight from the cache; this is
+    // exactly the state the compile path below produces, so `js_instantiate_module()`
+    // resolves it the same way with no special-casing.
 
-  JSValue bytecode = JS_Eval(
-    env->context,
-    str,
-    str_len,
-    module_name,
-    JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY | JS_EVAL_FLAG_DEFER_RESOLUTION
-  );
+    bytecode = JS_ReadObject(env->context, (const uint8_t *) cached_data, cached_data_len, JS_READ_OBJ_BYTECODE);
 
-  JS_FreeCString(env->context, str);
+    if (JS_IsException(bytecode)) {
+      // The cache is a hint, not correctness: on a version mismatch clear the
+      // pending exception and recompile from source.
 
-  if (JS_IsException(bytecode)) {
-    free(module_name);
+      JS_FreeValue(env->context, JS_GetException(env->context));
 
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
+      if (cache_rejected) *cache_rejected = true;
+    } else {
+      loaded = true;
     }
+  }
 
-    return js__error(env);
+  if (!loaded) {
+    size_t str_len;
+    const char *str = JS_ToCStringLen(env->context, &str_len, source->value);
+
+    // Compile the module without resolving its imports or evaluating it.
+
+    bytecode = JS_Eval(
+      env->context,
+      str,
+      str_len,
+      module_name,
+      JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY | JS_EVAL_FLAG_DEFER_RESOLUTION
+    );
+
+    JS_FreeCString(env->context, str);
+
+    if (JS_IsException(bytecode)) {
+      free(module_name);
+
+      if (env->depth == 0) {
+        JSValue error = JS_GetException(env->context);
+
+        js__uncaught_exception(env, error);
+      }
+
+      return js__error(env);
+    }
   }
 
   js_module_t *module = malloc(sizeof(js_module_t));
@@ -1370,6 +1472,55 @@ js_create_module(js_env_t *env, const char *name, size_t len, int offset, js_val
   module->id = JS_NewSymbol(env->context, module->name, false);
 
   *result = module;
+
+  return 0;
+}
+
+int
+js_create_module_code_cache(js_env_t *env, js_module_t *module, void **data, size_t *len) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  // Synthetic modules carry no bytecode, and an evaluated module's bytecode has
+  // been consumed by `js_run_module()`; in either case there is nothing to
+  // serialize. Produce the cache after `js_create_module()` (or after
+  // `js_instantiate_module()`) but before `js_run_module()`.
+
+  if (JS_IsNull(module->bytecode)) {
+    err = js_throw_error(env, NULL, "Cannot create a code cache for a synthetic or evaluated module");
+    assert(err == 0);
+
+    return js__error(env);
+  }
+
+  size_t size;
+  uint8_t *buffer = JS_WriteObject(env->context, &size, module->bytecode, JS_WRITE_OBJ_BYTECODE);
+
+  if (buffer == NULL) {
+    if (!JS_HasException(env->context)) {
+      err = js_throw_error(env, NULL, "Failed to serialize the module code cache");
+      assert(err == 0);
+    } else if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__uncaught_exception(env, error);
+    }
+
+    return js__error(env);
+  }
+
+  // As with scripts, copy the QuickJS-owned buffer into a plain `malloc()`
+  // buffer the caller can release with `free()`.
+
+  void *copy = malloc(size);
+
+  memcpy(copy, buffer, size);
+
+  js_free(env->context, buffer);
+
+  *data = copy;
+  *len = size;
 
   return 0;
 }
@@ -2789,10 +2940,13 @@ js_create_function(js_env_t *env, const char *name, size_t len, js_function_cb c
   return 0;
 }
 
-int
-js_create_function_with_source(js_env_t *env, const char *name, size_t name_len, const char *file, size_t file_len, js_value_t *const args[], size_t args_len, int offset, js_value_t *source, js_value_t **result) {
-  if (JS_HasException(env->context)) return js__error(env);
+// Synthesize the wrapper source `const name = (args) => { source }\n name` that
+// binds the argument list and yields the function as its completion value. The
+// returned buffer is owned by the caller (`free()`), with its length in
+// `*result_len`.
 
+static char *
+js__function_source(js_env_t *env, const char *name, size_t name_len, js_value_t *const args[], size_t args_len, js_value_t *source, size_t *result_len) {
   const char *str;
 
   size_t buf_len = 0;
@@ -2869,19 +3023,74 @@ js_create_function_with_source(js_env_t *env, const char *name, size_t name_len,
     strcat(buf, "\n");
   }
 
+  *result_len = buf_len;
+
+  return buf;
+}
+
+int
+js_compile_function(js_env_t *env, const char *name, size_t name_len, const char *file, size_t file_len, js_value_t *const args[], size_t args_len, int offset, js_value_t *source, js_value_t **result) {
+  return js_compile_function_with_code_cache(env, name, name_len, file, file_len, args, args_len, offset, source, NULL, 0, NULL, result);
+}
+
+int
+js_compile_function_with_code_cache(js_env_t *env, const char *name, size_t name_len, const char *file, size_t file_len, js_value_t *const args[], size_t args_len, int offset, js_value_t *source, const void *cached_data, size_t cached_data_len, bool *cache_rejected, js_value_t **result) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  if (cache_rejected) *cache_rejected = false;
+
   if (file == NULL) file = "";
 
-  JSValue function = JS_Eval(
-    env->context,
-    buf,
-    buf_len,
-    file,
-    JS_EVAL_TYPE_GLOBAL
-  );
+  // The serializable form is the compiled-but-unevaluated program template. It
+  // is materialized into the returned closure by evaluating a dup of it, and
+  // stashed on the closure so it can be serialized later.
 
-  free(buf);
+  JSValue bytecode;
+
+  bool loaded = false;
+
+  if (cached_data != NULL) {
+    bytecode = JS_ReadObject(env->context, (const uint8_t *) cached_data, cached_data_len, JS_READ_OBJ_BYTECODE);
+
+    if (JS_IsException(bytecode)) {
+      JS_FreeValue(env->context, JS_GetException(env->context));
+
+      if (cache_rejected) *cache_rejected = true;
+    } else {
+      loaded = true;
+    }
+  }
+
+  if (!loaded) {
+    size_t buf_len;
+    char *buf = js__function_source(env, name, name_len, args, args_len, source, &buf_len);
+
+    bytecode = JS_Eval(
+      env->context,
+      buf,
+      buf_len,
+      file,
+      JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY
+    );
+
+    free(buf);
+
+    if (JS_IsException(bytecode)) {
+      if (env->depth == 0) {
+        JSValue error = JS_GetException(env->context);
+
+        js__uncaught_exception(env, error);
+      }
+
+      return js__error(env);
+    }
+  }
+
+  JSValue function = JS_EvalFunction(env->context, JS_DupValue(env->context, bytecode));
 
   if (JS_IsException(function)) {
+    JS_FreeValue(env->context, bytecode);
+
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
@@ -2898,6 +3107,11 @@ js_create_function_with_source(js_env_t *env, const char *name, size_t name_len,
 
   JS_DefinePropertyValue(env->context, function, env->function_id_key, id, 0);
 
+  // Stash the program template so `js_create_function_code_cache()` can
+  // serialize it. Ownership of `bytecode` transfers to the property.
+
+  JS_DefinePropertyValue(env->context, function, env->function_bytecode_key, bytecode, 0);
+
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
   wrapper->value = function;
@@ -2905,6 +3119,63 @@ js_create_function_with_source(js_env_t *env, const char *name, size_t name_len,
   *result = wrapper;
 
   return 0;
+}
+
+int
+js_create_function_code_cache(js_env_t *env, js_value_t *function, void **data, size_t *len) {
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  // Only a function from `js_compile_function()` carries the program template
+  // needed to serialize; any other function has no cache to produce.
+
+  JSValue bytecode = JS_GetProperty(env->context, function->value, env->function_bytecode_key);
+
+  if (JS_IsUndefined(bytecode)) {
+    err = js_throw_error(env, NULL, "Cannot create a code cache for this function");
+    assert(err == 0);
+
+    return js__error(env);
+  }
+
+  size_t size;
+  uint8_t *buffer = JS_WriteObject(env->context, &size, bytecode, JS_WRITE_OBJ_BYTECODE);
+
+  JS_FreeValue(env->context, bytecode);
+
+  if (buffer == NULL) {
+    if (!JS_HasException(env->context)) {
+      err = js_throw_error(env, NULL, "Failed to serialize the function code cache");
+      assert(err == 0);
+    } else if (env->depth == 0) {
+      JSValue error = JS_GetException(env->context);
+
+      js__uncaught_exception(env, error);
+    }
+
+    return js__error(env);
+  }
+
+  // `JS_WriteObject()` hands back a buffer owned by QuickJS that must be
+  // released with `js_free()`. Copy it into a plain `malloc()` buffer so the
+  // caller can release it with `free()`.
+
+  void *copy = malloc(size);
+
+  memcpy(copy, buffer, size);
+
+  js_free(env->context, buffer);
+
+  *data = copy;
+  *len = size;
+
+  return 0;
+}
+
+int
+js_create_function_with_source(js_env_t *env, const char *name, size_t name_len, const char *file, size_t file_len, js_value_t *const args[], size_t args_len, int offset, js_value_t *source, js_value_t **result) {
+  return js_compile_function(env, name, name_len, file, file_len, args, args_len, offset, source, result);
 }
 
 int
