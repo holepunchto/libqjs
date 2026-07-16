@@ -25,6 +25,9 @@ list(APPEND tests
   coerce-symbol-to-string
   coerce-to-boolean
   coerce-to-object
+  compile-function
+  compile-function-with-code-cache
+  compile-function-with-code-cache-rejected
   create-arraybuffer
   create-arraybuffer-too-large
   create-arraybuffer-with-backing-store
@@ -65,7 +68,6 @@ list(APPEND tests
   create-function-throw
   create-function-throw-indirect
   create-function-with-finalizer
-  create-function-with-source
   create-int64
   create-module-import-missing
   create-module-with-code-cache
@@ -288,6 +290,7 @@ list(APPEND skipped_tests
   atomics-wait-timeout-notify
 
   # Not supported
+  compile-function-with-code-cache-rejected
   create-module-with-code-cache-rejected
   prepare-script-with-code-cache-rejected
 
