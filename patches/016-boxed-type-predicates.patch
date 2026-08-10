@@ -1,0 +1,52 @@
+diff --git a/quickjs.c b/quickjs.c
+index eb8c78c..ea750fe 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -3987,6 +3987,31 @@ JS_BOOL JS_IsModuleNamespace(JSValueConst v)
+     return JS_GetClassID(v) == JS_CLASS_MODULE_NS;
+ }
+ 
++JS_BOOL JS_IsBooleanObject(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_BOOLEAN;
++}
++
++JS_BOOL JS_IsNumberObject(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_NUMBER;
++}
++
++JS_BOOL JS_IsStringObject(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_STRING;
++}
++
++JS_BOOL JS_IsSymbolObject(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_SYMBOL;
++}
++
++JS_BOOL JS_IsBigIntObject(JSValueConst v)
++{
++    return JS_GetClassID(v) == JS_CLASS_BIG_INT;
++}
++
+ int JS_GetTypedArrayType(JSContext *ctx, JSValueConst obj)
+ {
+     JSClassID class_id = JS_GetClassID(obj);
+diff --git a/quickjs.h b/quickjs.h
+index cb8038d..b9a94ad 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -810,6 +810,11 @@ JS_BOOL JS_IsArguments(JSValueConst val);
+ JS_BOOL JS_IsMapIterator(JSValueConst val);
+ JS_BOOL JS_IsSetIterator(JSValueConst val);
+ JS_BOOL JS_IsModuleNamespace(JSValueConst val);
++JS_BOOL JS_IsBooleanObject(JSValueConst val);
++JS_BOOL JS_IsNumberObject(JSValueConst val);
++JS_BOOL JS_IsStringObject(JSValueConst val);
++JS_BOOL JS_IsSymbolObject(JSValueConst val);
++JS_BOOL JS_IsBigIntObject(JSValueConst val);
+ 
+ JSValue JS_NewDate(JSContext *ctx, double epoch_ms);
+ 

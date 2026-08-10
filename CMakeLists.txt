@@ -23,6 +23,7 @@ fetch_package(
     patches/013-dataview.patch
     patches/014-new-array.patch
     patches/015-defer-module-resolution.patch
+    patches/016-boxed-type-predicates.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)
@@ -62,7 +63,7 @@ target_include_directories(
 
 add_library(js OBJECT)
 
-fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
+fetch_package("github:holepunchto/libjs#boxed-type-predicates" SOURCE_DIR js)
 fetch_package("github:holepunchto/libintrusive")
 
 set_target_properties(
