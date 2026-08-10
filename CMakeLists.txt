@@ -63,7 +63,7 @@ target_include_directories(
 
 add_library(js OBJECT)
 
-fetch_package("github:holepunchto/libjs#boxed-type-predicates" SOURCE_DIR js)
+fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
 fetch_package("github:holepunchto/libintrusive")
 
 set_target_properties(
