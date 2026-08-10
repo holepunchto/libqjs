@@ -3985,10 +3985,28 @@ js_is_boolean(js_env_t *env, js_value_t *value, bool *result) {
 }
 
 int
+js_is_boolean_object(js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = JS_IsBooleanObject(value->value);
+
+  return 0;
+}
+
+int
 js_is_number(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
   *result = JS_IsNumber(value->value);
+
+  return 0;
+}
+
+int
+js_is_number_object(js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = JS_IsNumberObject(value->value);
 
   return 0;
 }
@@ -4041,10 +4059,28 @@ js_is_string(js_env_t *env, js_value_t *value, bool *result) {
 }
 
 int
+js_is_string_object(js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = JS_IsStringObject(value->value);
+
+  return 0;
+}
+
+int
 js_is_symbol(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
   *result = JS_IsSymbol(value->value);
+
+  return 0;
+}
+
+int
+js_is_symbol_object(js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = JS_IsSymbolObject(value->value);
 
   return 0;
 }
@@ -4148,6 +4184,15 @@ js_is_bigint(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
   *result = JS_IsBigInt(env->context, value->value);
+
+  return 0;
+}
+
+int
+js_is_bigint_object(js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = JS_IsBigIntObject(value->value);
 
   return 0;
 }

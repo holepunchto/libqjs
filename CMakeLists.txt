@@ -23,6 +23,7 @@ fetch_package(
     patches/013-dataview.patch
     patches/014-new-array.patch
     patches/015-defer-module-resolution.patch
+    patches/016-boxed-type-predicates.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)
