@@ -414,6 +414,36 @@ js_get_platform_loop(js_platform_t *platform, uv_loop_t **result) {
   return 0;
 }
 
+static char *
+js__on_normalize_module(JSContext *context, const char *base_name, const char *name, void *opaque) {
+  // QuickJS uses the normalized name as its module cache key and passes it to
+  // the loader in place of the specifier. Its default normalizer rewrites
+  // relative specifiers, which denies the host the specifier its own resolver
+  // needs. Key on the referrer's resolved name and the verbatim specifier
+  // instead, separated by a byte that occurs in neither.
+
+  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
+
+  js_module_resolver_t *resolver = env->resolvers;
+
+  const char *referrer = resolver && resolver->module && resolver->module->name
+                           ? resolver->module->name
+                           : base_name;
+
+  size_t referrer_len = strlen(referrer);
+  size_t name_len = strlen(name);
+
+  char *cname = js_malloc(context, referrer_len + 1 + name_len + 1);
+
+  if (cname == NULL) return NULL;
+
+  memcpy(cname, referrer, referrer_len);
+  cname[referrer_len] = '\x1f';
+  memcpy(cname + referrer_len + 1, name, name_len + 1);
+
+  return cname;
+}
+
 static JSModuleDef *
 js__on_resolve_module(JSContext *context, const char *name, void *opaque) {
   int err;
@@ -428,8 +458,10 @@ js__on_resolve_module(JSContext *context, const char *name, void *opaque) {
 
   js_module_t *module;
 
+  const char *separator = strrchr(name, '\x1f');
+
   js_value_t specifier = {
-    .value = JS_NewString(env->context, name),
+    .value = JS_NewString(env->context, separator ? separator + 1 : name),
   };
 
   js_value_t assertions = {
@@ -807,7 +839,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   JS_SetMaxStackSize(runtime, 0);
   JS_SetCanBlock(runtime, false);
-  JS_SetModuleLoaderFunc(runtime, NULL, js__on_resolve_module, NULL);
+  JS_SetModuleLoaderFunc(runtime, js__on_normalize_module, js__on_resolve_module, NULL);
   JS_SetHostPromiseRejectionTracker(runtime, js__on_promise_rejection, NULL);
 
   if (options && options->memory_limit) {
