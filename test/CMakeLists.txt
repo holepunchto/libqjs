@@ -7,6 +7,7 @@ list(APPEND tests
   add-teardown-callback-remove
   add-type-tag
   add-type-tag-delegate
+  add-type-tag-twice
   adjust-external-memory
   atomics-wait-timeout
   atomics-wait-timeout-notify
@@ -19,6 +20,8 @@ list(APPEND tests
   call-function-with-checkpoint
   call-threadsafe-function-after-release
   call-threadsafe-function-with-data
+  check-type-tag-from-prototype
+  check-type-tag-not-tagged
   coerce-number-to-string
   coerce-object-to-string
   coerce-string-to-number
@@ -26,8 +29,10 @@ list(APPEND tests
   coerce-to-boolean
   coerce-to-object
   compile-function
+  compile-function-invalid-argument-name
   compile-function-with-code-cache
   compile-function-with-code-cache-rejected
+  create-array-with-elements
   create-arraybuffer
   create-arraybuffer-too-large
   create-arraybuffer-with-backing-store
@@ -40,6 +45,7 @@ list(APPEND tests
   create-delegate
   create-delegate-delete-throw
   create-delegate-get-throw
+  create-delegate-get-throw-then-clear
   create-delegate-get-without-has
   create-delegate-has-throw
   create-delegate-keys-throw
@@ -67,6 +73,7 @@ list(APPEND tests
   create-function-return-double
   create-function-throw
   create-function-throw-indirect
+  create-function-throw-then-clear
   create-function-with-finalizer
   create-int64
   create-module-import-missing
@@ -92,6 +99,7 @@ list(APPEND tests
   create-sharedarraybuffer
   create-sharedarraybuffer-with-backing-store
   create-string-latin1
+  create-string-too-long
   create-string-utf8
   create-string-utf8-with-null
   create-string-utf16le
@@ -132,6 +140,10 @@ list(APPEND tests
   delete-element
   delete-property
   dynamic-import
+  dynamic-import-function-handler
+  dynamic-import-handler-code-cache
+  dynamic-import-module-handler
+  dynamic-import-script-handler
   dynamic-import-with-promise
   dynamic-import-with-referrer
   dynamic-import-with-referrer-function
@@ -154,7 +166,35 @@ list(APPEND tests
   get-heap-space-statistics
   get-heap-statistics
   get-module-name
+  get-module-namespace-uninstantiated
   get-new-target
+  get-object-type
+  get-object-type-arguments
+  get-object-type-array
+  get-object-type-arraybuffer
+  get-object-type-bigint-object
+  get-object-type-boolean-object
+  get-object-type-dataview
+  get-object-type-date
+  get-object-type-error
+  get-object-type-external
+  get-object-type-generator
+  get-object-type-map
+  get-object-type-map-iterator
+  get-object-type-module-namespace
+  get-object-type-number-object
+  get-object-type-promise
+  get-object-type-proxy
+  get-object-type-regexp
+  get-object-type-set
+  get-object-type-set-iterator
+  get-object-type-sharedarraybuffer
+  get-object-type-string-object
+  get-object-type-symbol-object
+  get-object-type-typedarray
+  get-object-type-weak-map
+  get-object-type-weak-ref
+  get-object-type-weak-set
   get-platform-identifier
   get-platform-limits
   get-platform-loop
@@ -162,6 +202,7 @@ list(APPEND tests
   get-property-missing
   get-prototype
   get-sharedarraybuffer-info
+  get-string-view
   get-typedarray-info-uint16array
   get-typedarray-info-uint16array-large
   get-typedarray-info-uint8array
@@ -169,9 +210,11 @@ list(APPEND tests
   get-typedarray-info-uint8array-with-offset
   get-value-bigint-uint64
   get-value-int32-int64
+  get-value-int64-out-of-range
   get-value-string-utf8
   get-value-string-utf8-length
   get-value-string-utf8-no-null
+  get-value-string-utf8-truncate
   has-element
   has-own-property
   has-property
@@ -181,6 +224,7 @@ list(APPEND tests
   inspector-attach-context
   inspector-multiple-debugger-enable
   inspector-pause
+  instantiate-module-evaluating
   is-arguments
   is-array
   is-arraybuffer
@@ -245,9 +289,13 @@ list(APPEND tests
   run-module-async
   run-module-cyclic-import
   run-module-double-nested-import
+  run-module-evaluating
   run-module-in-context
   run-module-nested-import
+  run-module-relative-import
   run-module-throw
+  run-module-throw-then-clear
+  run-module-uninstantiated
   run-script
   run-script-ignore-return
   run-script-in-context
@@ -279,12 +327,16 @@ list(APPEND tests
   typeof-string
   typeof-symbol
   typeof-undefined
+  unwrap-from-prototype
+  unwrap-not-wrapped
   wasm
   wasm-async
   wasm-async-io
   wasm-async-io-multiple
   wrap
+  wrap-remove-then-unwrap
   wrap-remove-with-finalizer
+  wrap-twice
   wrap-with-finalizer
   wrap-with-reference
 )
@@ -293,6 +345,10 @@ list(APPEND skipped_tests
   # Not supported
   atomics-wait-timeout
   atomics-wait-timeout-notify
+
+  # Not supported
+  get-module-namespace-uninstantiated
+  get-string-view
 
   # Not supported
   compile-function-with-code-cache-rejected
@@ -335,6 +391,10 @@ list(APPEND skipped_tests
 
   # Not supported
   dynamic-import
+  dynamic-import-function-handler
+  dynamic-import-handler-code-cache
+  dynamic-import-module-handler
+  dynamic-import-script-handler
   dynamic-import-with-promise
   dynamic-import-with-referrer
   dynamic-import-with-referrer-function

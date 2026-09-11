@@ -101,6 +101,8 @@ struct js_env_s {
   js_module_resolver_t *resolvers;
   js_module_evaluator_t *evaluators;
 
+  intrusive_list_t deferreds;
+
   bool destroying;
 
   js_promise_rejection_t *promise_rejections;
@@ -138,6 +140,15 @@ struct js_escapable_handle_scope_s {
   js_handle_scope_t *parent;
 };
 
+typedef enum {
+  js_module_uninstantiated,
+  js_module_instantiating,
+  js_module_instantiated,
+  js_module_evaluating,
+  js_module_evaluated,
+  js_module_errored,
+} js_module_state_t;
+
 struct js_module_s {
   JSContext *context;
   JSValue bytecode;
@@ -146,6 +157,9 @@ struct js_module_s {
   js_module_meta_cb meta;
   void *meta_data;
   char *name;
+  js_module_state_t state;
+  bool synthetic;
+  bool aborted;
 };
 
 struct js_script_s {
@@ -183,6 +197,7 @@ struct js_ref_s {
 struct js_deferred_s {
   JSValue resolve;
   JSValue reject;
+  intrusive_list_node_t list;
 };
 
 struct js_string_view_s {
@@ -794,6 +809,17 @@ js__on_handle_close(uv_handle_t *handle) {
 
 static void
 js__close_env(js_env_t *env) {
+  intrusive_list_for_each(next, &env->deferreds) {
+    js_deferred_t *deferred = intrusive_entry(next, js_deferred_t, list);
+
+    intrusive_list_remove(&env->deferreds, &deferred->list);
+
+    JS_FreeValue(env->context, deferred->resolve);
+    JS_FreeValue(env->context, deferred->reject);
+
+    free(deferred);
+  }
+
   JS_FreeValue(env->context, env->default_module_id);
   JS_FreeAtom(env->context, env->function_id_key);
   JS_FreeAtom(env->context, env->function_bytecode_key);
@@ -895,6 +921,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   env->promise_rejections = NULL;
 
+  intrusive_list_init(&env->deferreds);
   intrusive_list_init(&env->teardown_queue.tasks);
 
   env->callbacks.uncaught_exception = NULL;
@@ -1417,6 +1444,11 @@ js_get_script_id(js_env_t *env, js_script_t *script, js_value_t **result) {
 }
 
 int
+js_on_script_dynamic_import(js_env_t *env, js_script_t *script, js_dynamic_import_cb cb, void *data) {
+  return 0;
+}
+
+int
 js_create_module(js_env_t *env, const char *name, size_t len, int offset, js_value_t *source, js_module_meta_cb cb, void *data, js_module_t **result) {
   return js_create_module_with_code_cache(env, name, len, offset, source, NULL, 0, NULL, cb, data, result);
 }
@@ -1497,6 +1529,9 @@ js_create_module_with_code_cache(js_env_t *env, const char *name, size_t len, in
   module->meta = cb;
   module->meta_data = data;
   module->name = module_name;
+  module->state = js_module_uninstantiated;
+  module->synthetic = false;
+  module->aborted = false;
 
   // Mint a unique identifier for the module so it can be recovered as the
   // referrer of any dynamic import().
@@ -1578,7 +1613,14 @@ js__on_evaluate_module(JSContext *context, JSModuleDef *definition) {
   err = js_close_handle_scope(env, scope);
   assert(err == 0);
 
-  return 0;
+  if (!JS_HasException(context)) return 0;
+
+  // An exception left pending by the callback aborts the evaluation, which the
+  // module remembers so that running it can fail rather than report a rejection
+  // for something that never ran.
+  evaluator->module->aborted = true;
+
+  return -1;
 }
 
 int
@@ -1592,6 +1634,9 @@ js_create_synthetic_module(js_env_t *env, const char *name, size_t len, js_value
   module->definition = JS_NewCModule(env->context, name, js__on_evaluate_module);
   module->meta = NULL;
   module->meta_data = NULL;
+  module->state = js_module_uninstantiated;
+  module->synthetic = true;
+  module->aborted = false;
 
   if (len == (size_t) -1) {
     module->name = strdup(name);
@@ -1692,8 +1737,22 @@ js_get_default_module_id(js_env_t *env, js_value_t **result) {
 }
 
 int
+js_on_module_dynamic_import(js_env_t *env, js_module_t *module, js_dynamic_import_cb cb, void *data) {
+  return 0;
+}
+
+int
 js_get_module_namespace(js_env_t *env, js_module_t *module, js_value_t **result) {
-  // Allow continuing even with a pending exception
+  if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  if (module->state < js_module_instantiated) {
+    err = js_throw_error(env, NULL, "Cannot get the namespace of an uninstantiated module");
+    assert(err == 0);
+
+    return js__error(env);
+  }
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
@@ -1730,7 +1789,24 @@ int
 js_instantiate_module(js_env_t *env, js_module_t *module, js_module_resolve_cb cb, void *data) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
+  // A module being instantiated may be entered again as the graph around it is
+  // walked, a cyclic import among them, but one being evaluated may not.
+  if (module->state == js_module_evaluating) {
+    err = js_throw_error(env, NULL, "Cannot instantiate a module that is already being instantiated or evaluated");
+    assert(err == 0);
+
+    return js__error(env);
+  }
+
   // Synthetic modules carry no bytecode and have nothing to resolve.
+
+  if (module->synthetic) {
+    if (module->state == js_module_uninstantiated) module->state = js_module_instantiated;
+
+    return 0;
+  }
 
   if (JS_IsNull(module->bytecode)) return 0;
 
@@ -1742,6 +1818,8 @@ js_instantiate_module(js_env_t *env, js_module_t *module, js_module_resolve_cb c
   };
 
   env->resolvers = &resolver;
+
+  module->state = js_module_instantiating;
 
   // Resolve the module's imports, driving the resolve callback; evaluation is
   // deferred to `js_run_module()`.
@@ -1757,6 +1835,8 @@ js_instantiate_module(js_env_t *env, js_module_t *module, js_module_resolve_cb c
   env->resolvers = resolver.next;
 
   if (success < 0) {
+    module->state = js_module_uninstantiated;
+
     if (env->depth == 0) {
       JSValue error = JS_GetException(env->context);
 
@@ -1766,6 +1846,8 @@ js_instantiate_module(js_env_t *env, js_module_t *module, js_module_resolve_cb c
     return js__error(env);
   }
 
+  module->state = js_module_instantiated;
+
   return 0;
 }
 
@@ -1774,6 +1856,13 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
   int err;
+
+  if (module->state != js_module_instantiated && module->state != js_module_evaluated && module->state != js_module_errored) {
+    err = js_throw_error(env, NULL, module->state == js_module_evaluating ? "Cannot run a module that is already evaluating" : "Cannot run an uninstantiated module");
+    assert(err == 0);
+
+    return js__error(env);
+  }
 
   if (module->meta) {
     JSValue meta = JS_GetImportMeta(env->context, module->definition);
@@ -1793,21 +1882,52 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
 
       JS_FreeValue(env->context, error);
 
+      module->state = js_module_errored;
+
       return 0;
     }
   }
 
+  module->state = js_module_evaluating;
+
   env->depth++;
 
-  JSValue value = JS_EvalFunction(env->context, module->bytecode);
+  // The bytecode is the module itself, which the engine holds on to, so the
+  // module is evaluated by way of its definition and the reference kept for the
+  // code cache given up here. An evaluated module hands back the result the
+  // engine kept for it.
+  JS_FreeValue(env->context, module->bytecode);
+
+  module->bytecode = JS_NULL;
+
+  JSValue value = JS_EvalFunction(env->context, JS_DupValue(env->context, JS_MKPTR(JS_TAG_MODULE, module->definition)));
 
   if (env->depth == 1) js__run_microtasks(env);
 
   env->depth--;
 
-  module->bytecode = JS_NULL;
+  if (module->aborted) {
+    module->aborted = false;
+    module->state = js_module_errored;
+
+    // The engine took the exception the evaluate callback left pending into the
+    // rejection of the promise it hands back, so it is recovered from there.
+    JSValue error = JS_PromiseResult(env->context, value);
+
+    JS_FreeValue(env->context, value);
+
+    if (env->depth) {
+      JS_Throw(env->context, error);
+    } else {
+      js__uncaught_exception(env, error);
+    }
+
+    return js__error(env);
+  }
 
   if (JS_IsException(value)) {
+    module->state = js_module_errored;
+
     JSValue error = JS_GetException(env->context);
 
     js_deferred_t *deferred;
@@ -1821,11 +1941,16 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
     return 0;
   }
 
-  js_value_t *wrapper = js__create_handle(env, env->scope);
+  module->state = js_module_evaluated;
 
-  wrapper->value = value;
+  if (result == NULL) JS_FreeValue(env->context, value);
+  else {
+    js_value_t *wrapper = js__create_handle(env, env->scope);
 
-  *result = wrapper;
+    wrapper->value = value;
+
+    *result = wrapper;
+  }
 
   return 0;
 }
@@ -2184,6 +2309,32 @@ js_define_properties(js_env_t *env, js_value_t *object, js_property_descriptor_t
   return 0;
 }
 
+static int
+js__get_own_external(js_env_t *env, JSValueConst object, const char *name, JSValue *result) {
+  JSAtom atom = JS_NewAtom(env->context, name);
+
+  JSPropertyDescriptor descriptor;
+
+  int found = JS_GetOwnProperty(env->context, &descriptor, object, atom);
+
+  JS_FreeAtom(env->context, atom);
+
+  if (found < 0) return js__error(env);
+
+  if (found == 0) {
+    *result = JS_UNDEFINED;
+
+    return 0;
+  }
+
+  JS_FreeValue(env->context, descriptor.getter);
+  JS_FreeValue(env->context, descriptor.setter);
+
+  *result = descriptor.value;
+
+  return 0;
+}
+
 int
 js_wrap(js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_cb, void *finalize_hint, js_ref_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
@@ -2198,23 +2349,41 @@ js_wrap(js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_c
 
   JSValue external = JS_NewObjectClass(env->context, js__external_class_id);
 
-  JS_SetOpaque(external, finalizer);
+  if (JS_IsException(external)) {
+    free(finalizer);
+
+    return js__error(env);
+  }
 
   JSAtom atom = JS_NewAtom(env->context, "__native_external");
 
-  err = JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
+  // The define takes ownership of the value and frees it on failure, which would
+  // run the finalizer of the external and with it a callback for a wrap that
+  // never took effect. A reference is kept so the opaque can be attached once
+  // the define has settled, leaving nothing to finalize if it did not.
+  err = JS_DefinePropertyValue(env->context, object->value, atom, JS_DupValue(env->context, external), 0);
 
-  if (err < 0) {
+  JS_FreeAtom(env->context, atom);
+
+  // The define declines with `false` rather than an exception when the object is
+  // not extensible, or already carries the property of a wrap it was given
+  // before, neither of which may be reported as a wrap that took.
+  if (err <= 0) {
+    if (err == 0) {
+      err = js_throw_errorf(env, NULL, "Object could not be wrapped");
+      assert(err == 0);
+    }
+
     JS_FreeValue(env->context, external);
-
-    JS_FreeAtom(env->context, atom);
 
     free(finalizer);
 
     return js__error(env);
   }
 
-  JS_FreeAtom(env->context, atom);
+  JS_SetOpaque(external, finalizer);
+
+  JS_FreeValue(env->context, external);
 
   if (result) return js_create_reference(env, object, 0, result);
 
@@ -2225,15 +2394,22 @@ int
 js_unwrap(js_env_t *env, js_value_t *object, void **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSAtom atom = JS_NewAtom(env->context, "__native_external");
+  int err;
 
-  JSValue external = JS_GetProperty(env->context, object->value, atom);
-
-  JS_FreeAtom(env->context, atom);
+  JSValue external;
+  err = js__get_own_external(env, object->value, "__native_external", &external);
+  if (err < 0) return err;
 
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js__external_class_id);
 
   JS_FreeValue(env->context, external);
+
+  if (finalizer == NULL) {
+    err = js_throw_type_error(env, NULL, "Object is not wrapped");
+    assert(err == 0);
+
+    return js__error(env);
+  }
 
   *result = finalizer->data;
 
@@ -2246,27 +2422,31 @@ js_remove_wrap(js_env_t *env, js_value_t *object, void **result) {
 
   int err;
 
-  JSAtom atom = JS_NewAtom(env->context, "__native_external");
-
-  JSValue external = JS_GetProperty(env->context, object->value, atom);
+  JSValue external;
+  err = js__get_own_external(env, object->value, "__native_external", &external);
+  if (err < 0) return err;
 
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js__external_class_id);
 
-  JS_FreeValue(env->context, external);
+  if (finalizer == NULL) {
+    JS_FreeValue(env->context, external);
 
-  finalizer->finalize_cb = NULL;
-
-  if (result) *result = finalizer->data;
-
-  err = JS_DeleteProperty(env->context, object->value, atom, 0);
-
-  if (err < 0) {
-    JS_FreeAtom(env->context, atom);
+    err = js_throw_type_error(env, NULL, "Object is not wrapped");
+    assert(err == 0);
 
     return js__error(env);
   }
 
-  JS_FreeAtom(env->context, atom);
+  if (result) *result = finalizer->data;
+
+  // The property was defined as non-configurable and so cannot be deleted. The
+  // external is emptied instead, which leaves the object unwrapped as far as
+  // every lookup is concerned.
+  JS_SetOpaque(external, NULL);
+
+  JS_FreeValue(env->context, external);
+
+  free(finalizer);
 
   return 0;
 }
@@ -2512,11 +2692,15 @@ js_add_type_tag(js_env_t *env, js_value_t *object, const js_type_tag_t *tag) {
 
   int err;
 
-  JSAtom atom = JS_NewAtom(env->context, "__native_type_tag");
+  JSValue tagged;
+  err = js__get_own_external(env, object->value, "__native_type_tag", &tagged);
+  if (err < 0) return err;
 
-  if (JS_HasProperty(env->context, object->value, atom) == 1) {
-    JS_FreeAtom(env->context, atom);
+  bool exists = JS_GetOpaque(tagged, js__type_tag_class_id) != NULL;
 
+  JS_FreeValue(env->context, tagged);
+
+  if (exists) {
     err = js_throw_errorf(env, NULL, "Object is already type tagged");
     assert(err == 0);
 
@@ -2530,12 +2714,33 @@ js_add_type_tag(js_env_t *env, js_value_t *object, const js_type_tag_t *tag) {
 
   JSValue external = JS_NewObjectClass(env->context, js__type_tag_class_id);
 
+  if (JS_IsException(external)) {
+    free(existing);
+
+    return js__error(env);
+  }
+
   JS_SetOpaque(external, existing);
 
+  JSAtom atom = JS_NewAtom(env->context, "__native_type_tag");
+
+  // Defining the property fails on an object that is frozen or otherwise not
+  // extensible, and the define frees the external, and with it the tag it
+  // holds, on its way out.
   err = JS_DefinePropertyValue(env->context, object->value, atom, external, 0);
-  assert(err >= 0);
 
   JS_FreeAtom(env->context, atom);
+
+  // The define owns the external either way, and frees the tag along with it,
+  // so nothing is left to release here.
+  if (err <= 0) {
+    if (err == 0) {
+      err = js_throw_errorf(env, NULL, "Object could not be type tagged");
+      assert(err == 0);
+    }
+
+    return js__error(env);
+  }
 
   return 0;
 }
@@ -2544,21 +2749,17 @@ int
 js_check_type_tag(js_env_t *env, js_value_t *object, const js_type_tag_t *tag, bool *result) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  JSAtom atom = JS_NewAtom(env->context, "__native_type_tag");
+  int err;
 
-  *result = false;
+  JSValue external;
+  err = js__get_own_external(env, object->value, "__native_type_tag", &external);
+  if (err < 0) return err;
 
-  if (JS_HasProperty(env->context, object->value, atom) == 1) {
-    JSValue external = JS_GetProperty(env->context, object->value, atom);
+  js_type_tag_t *existing = (js_type_tag_t *) JS_GetOpaque(external, js__type_tag_class_id);
 
-    js_type_tag_t *existing = (js_type_tag_t *) JS_GetOpaque(external, js__type_tag_class_id);
+  JS_FreeValue(env->context, external);
 
-    JS_FreeValue(env->context, external);
-
-    *result = existing->lower == tag->lower && existing->upper == tag->upper;
-  }
-
-  JS_FreeAtom(env->context, atom);
+  *result = existing != NULL && existing->lower == tag->lower && existing->upper == tag->upper;
 
   return 0;
 }
@@ -2651,9 +2852,26 @@ js_create_bigint_words(js_env_t *env, int sign, const uint64_t *words, size_t le
   return js__error(env);
 }
 
+static inline int
+js__check_string_length(js_env_t *env, size_t len) {
+  int err;
+
+  if (len == (size_t) -1 || len <= 0x3fffffff) return 0;
+
+  err = js_throw_range_error(env, NULL, "Invalid string length");
+  assert(err == 0);
+
+  return js__error(env);
+}
+
 int
 js_create_string_utf8(js_env_t *env, const utf8_t *str, size_t len, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  err = js__check_string_length(env, len);
+  if (err < 0) return err;
 
   JSValue value;
 
@@ -2685,6 +2903,11 @@ js_create_string_utf8(js_env_t *env, const utf8_t *str, size_t len, js_value_t *
 int
 js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  err = js__check_string_length(env, len);
+  if (err < 0) return err;
 
   if (len == (size_t) -1) len = wcslen((wchar_t *) str);
 
@@ -2720,6 +2943,11 @@ js_create_string_utf16le(js_env_t *env, const utf16_t *str, size_t len, js_value
 int
 js_create_string_latin1(js_env_t *env, const latin1_t *str, size_t len, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  err = js__check_string_length(env, len);
+  if (err < 0) return err;
 
   if (len == (size_t) -1) len = strlen((char *) str);
 
@@ -3069,6 +3297,8 @@ int
 js_compile_function_with_code_cache(js_env_t *env, const char *name, size_t name_len, const char *file, size_t file_len, js_value_t *const args[], size_t args_len, int offset, js_value_t *source, const void *cached_data, size_t cached_data_len, bool *cache_rejected, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   if (cache_rejected) *cache_rejected = false;
 
   if (file == NULL) file = "";
@@ -3128,6 +3358,28 @@ js_compile_function_with_code_cache(js_env_t *env, const char *name, size_t name
 
       js__uncaught_exception(env, error);
     }
+
+    return js__error(env);
+  }
+
+  JSValue length = JS_GetPropertyStr(env->context, function, "length");
+
+  double arity;
+
+  JS_ToFloat64(env->context, &arity, length);
+
+  JS_FreeValue(env->context, length);
+
+  // An argument name that is not an identifier can still parse as part of the
+  // parameter list, an empty name and one smuggling several parameters among
+  // them, and the engine takes those without a word. Either way the function
+  // ends up with a different arity than it was asked for.
+  if (arity != (double) args_len) {
+    JS_FreeValue(env->context, bytecode);
+    JS_FreeValue(env->context, function);
+
+    err = js_throw_errorf(env, NULL, "Could not compile function");
+    assert(err == 0);
 
     return js__error(env);
   }
@@ -3211,6 +3463,11 @@ js_create_function_with_source(js_env_t *env, const char *name, size_t name_len,
 }
 
 int
+js_on_function_dynamic_import(js_env_t *env, js_value_t *function, js_dynamic_import_cb cb, void *data) {
+  return 0;
+}
+
+int
 js_get_function_id(js_env_t *env, js_value_t *function, js_value_t **result) {
   // Allow continuing even with a pending exception
 
@@ -3267,11 +3524,32 @@ js_create_array_with_length(js_env_t *env, size_t len, js_value_t **result) {
   return 0;
 }
 
+int
+js_create_array_with_elements(js_env_t *env, js_value_t *const elements[], size_t element_count, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = JS_NewArray(env->context, element_count);
+
+  for (size_t i = 0; i < element_count; i++) {
+    JS_SetPropertyUint32(env->context, wrapper->value, i, JS_DupValue(env->context, elements[i]->value));
+  }
+
+  *result = wrapper;
+
+  return 0;
+}
+
 static void
 js__on_external_finalize(JSRuntime *runtime, JSValue value) {
   js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
 
   js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(value, js__external_class_id);
+
+  // A wrap that failed to install leaves behind an external that never received
+  // an opaque of its own.
+  if (finalizer == NULL) return;
 
   if (finalizer->finalize_cb) {
     finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
@@ -3461,6 +3739,10 @@ js_create_promise(js_env_t *env, js_deferred_t **deferred, js_value_t **promise)
   (*deferred)->resolve = functions[0];
   (*deferred)->reject = functions[1];
 
+  // A deferred that is never settled still holds the functions that would have
+  // settled it, which the environment gives back on teardown.
+  intrusive_list_prepend(&env->deferreds, &(*deferred)->list);
+
   *promise = wrapper;
 
   return 0;
@@ -3480,6 +3762,8 @@ js__conclude_deferred(js_env_t *env, js_deferred_t *deferred, js_value_t *resolu
   JS_FreeValue(env->context, result);
   JS_FreeValue(env->context, deferred->resolve);
   JS_FreeValue(env->context, deferred->reject);
+
+  intrusive_list_remove(&env->deferreds, &deferred->list);
 
   free(deferred);
 
@@ -4175,7 +4459,9 @@ int
 js_is_array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_IsArray(env->context, value->value);
+  // The engine answers for the target of a proxy as well, whereas a proxy is a
+  // proxy no matter what it wraps.
+  *result = !JS_IsProxy(value->value) && JS_IsArray(env->context, value->value) == 1;
 
   return 0;
 }
@@ -4193,11 +4479,19 @@ int
 js_is_wrapped(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  JSAtom atom = JS_NewAtom(env->context, "__native_external");
+  int err;
 
-  *result = JS_IsObject(value->value) && JS_HasProperty(env->context, value->value, atom) == 1;
+  *result = false;
 
-  JS_FreeAtom(env->context, atom);
+  if (!JS_IsObject(value->value)) return 0;
+
+  JSValue external;
+  err = js__get_own_external(env, value->value, "__native_external", &external);
+  if (err < 0) return err;
+
+  *result = JS_GetOpaque(external, js__external_class_id) != NULL;
+
+  JS_FreeValue(env->context, external);
 
   return 0;
 }
@@ -4502,6 +4796,59 @@ js_is_module_namespace(js_env_t *env, js_value_t *value, bool *result) {
 }
 
 int
+js_get_object_type(js_env_t *env, js_value_t *value, js_object_type_t *result) {
+  // Allow continuing even with a pending exception
+
+  int err;
+
+  bool is;
+
+  // Classify by way of the individual predicates, in the order of precedence
+  // documented for `js_object_type_t`, so that the two cannot drift apart. The
+  // saving is in classifying with a single call, not in the predicates
+  // themselves, which are all cheap.
+#define V(type, predicate) \
+  err = predicate(env, value, &is); \
+  assert(err == 0); \
+  if (is) { \
+    *result = type; \
+    return 0; \
+  }
+
+  V(js_array, js_is_array)
+  V(js_arguments, js_is_arguments)
+  V(js_date, js_is_date)
+  V(js_regexp, js_is_regexp)
+  V(js_error, js_is_error)
+  V(js_promise, js_is_promise)
+  V(js_proxy, js_is_proxy)
+  V(js_generator, js_is_generator)
+  V(js_map, js_is_map)
+  V(js_set, js_is_set)
+  V(js_map_iterator, js_is_map_iterator)
+  V(js_set_iterator, js_is_set_iterator)
+  V(js_weak_map, js_is_weak_map)
+  V(js_weak_set, js_is_weak_set)
+  V(js_weak_ref, js_is_weak_ref)
+  V(js_arraybuffer, js_is_arraybuffer)
+  V(js_sharedarraybuffer, js_is_sharedarraybuffer)
+  V(js_typedarray, js_is_typedarray)
+  V(js_dataview, js_is_dataview)
+  V(js_module_namespace, js_is_module_namespace)
+  V(js_boolean_object, js_is_boolean_object)
+  V(js_number_object, js_is_number_object)
+  V(js_string_object, js_is_string_object)
+  V(js_symbol_object, js_is_symbol_object)
+  V(js_bigint_object, js_is_bigint_object)
+  V((js_object_type_t) js_external, js_is_external)
+#undef V
+
+  *result = (js_object_type_t) js_object;
+
+  return 0;
+}
+
+int
 js_strict_equals(js_env_t *env, js_value_t *a, js_value_t *b, bool *result) {
   // Allow continuing even with a pending exception
 
@@ -4593,7 +4940,16 @@ int
 js_get_value_int64(js_env_t *env, js_value_t *value, int64_t *result) {
   // Allow continuing even with a pending exception
 
-  JS_ToInt64(env->context, result, value->value);
+  double number;
+
+  JS_ToFloat64(env->context, &number, value->value);
+
+  // The conversion offered by the engine wraps around the range rather than
+  // clamping to it, so the number is narrowed here instead.
+  if (!isfinite(number)) *result = 0;
+  else if (number <= (double) INT64_MIN) *result = INT64_MIN;
+  else if (number >= (double) INT64_MAX) *result = INT64_MAX;
+  else *result = (int64_t) number;
 
   return 0;
 }
@@ -4796,7 +5152,7 @@ js_get_array_elements(js_env_t *env, js_value_t *array, js_value_t **elements, s
 }
 
 int
-js_set_array_elements(js_env_t *env, js_value_t *array, const js_value_t *elements[], size_t len, size_t offset) {
+js_set_array_elements(js_env_t *env, js_value_t *array, js_value_t *const elements[], size_t len, size_t offset) {
   if (JS_HasException(env->context)) return js__error(env);
 
   env->depth++;
