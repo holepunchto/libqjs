@@ -254,6 +254,7 @@ struct js_arraybuffer_backing_store_s {
   size_t len;
   uint8_t *data;
   JSValue owner;
+  bool shared;
 };
 
 struct js_promise_rejection_s {
@@ -3994,6 +3995,8 @@ js_get_arraybuffer_backing_store(js_env_t *env, js_value_t *arraybuffer, js_arra
 
   backing_store->owner = JS_DupValue(env->context, arraybuffer->value);
 
+  backing_store->shared = false;
+
   *result = backing_store;
 
   return 0;
@@ -4094,6 +4097,10 @@ js_get_sharedarraybuffer_backing_store(js_env_t *env, js_value_t *sharedarraybuf
 
   backing_store->owner = JS_NULL;
 
+  backing_store->shared = true;
+
+  js__on_shared_dup(NULL, backing_store->data);
+
   *result = backing_store;
 
   return 0;
@@ -4104,7 +4111,11 @@ js_release_arraybuffer_backing_store(js_env_t *env, js_arraybuffer_backing_store
   // Allow continuing even with a pending exception
 
   if (--backing_store->references == 0) {
-    JS_FreeValue(env->context, backing_store->owner);
+    if (backing_store->shared) {
+      js__on_shared_free(NULL, backing_store->data);
+    } else {
+      JS_FreeValue(env->context, backing_store->owner);
+    }
 
     free(backing_store);
   }
