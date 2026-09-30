@@ -102,6 +102,7 @@ struct js_env_s {
   js_module_evaluator_t *evaluators;
 
   intrusive_list_t deferreds;
+  intrusive_list_t finalizers;
 
   bool destroying;
 
@@ -208,6 +209,8 @@ struct js_finalizer_s {
   void *data;
   js_finalize_cb finalize_cb;
   void *finalize_hint;
+  bool tracked;
+  intrusive_list_node_t list;
 };
 
 struct js_finalizer_list_s {
@@ -218,8 +221,7 @@ struct js_finalizer_list_s {
 struct js_delegate_s {
   js_delegate_callbacks_t callbacks;
   void *data;
-  js_finalize_cb finalize_cb;
-  void *finalize_hint;
+  js_finalizer_t finalizer;
 };
 
 struct js_callback_s {
@@ -661,35 +663,18 @@ js__run_microtasks(js_env_t *env) {
 }
 
 static void
-js__on_prepare(uv_prepare_t *handle);
-
-static inline void
-js__on_check_liveness(js_env_t *env) {
-  int err;
-
-  if (true /* macrotask queue empty */) {
-    err = uv_prepare_stop(&env->prepare);
-  } else {
-    err = uv_prepare_start(&env->prepare, js__on_prepare);
-  }
-
-  assert(err == 0);
-}
-
-static void
 js__on_prepare(uv_prepare_t *handle) {
-  js_env_t *env = (js_env_t *) handle->data;
-
-  js__on_check_liveness(env);
+  // Nothing is queued on the loop's behalf, so there is nothing to run before
+  // it blocks.
 }
 
 static void
 js__on_check(uv_check_t *handle) {
-  js_env_t *env = (js_env_t *) handle->data;
-
-  if (uv_loop_alive(env->loop)) return;
-
-  js__on_check_liveness(env);
+  // Nothing is queued on the loop's behalf, so there is nothing to settle once
+  // it has polled. Were a macrotask queue ever added, its liveness would have
+  // to be held as work is queued rather than settled from here: the loop runs
+  // timers after the check phase, so what their callbacks queue cannot be
+  // observed from a check callback.
 }
 
 static inline size_t
@@ -807,8 +792,42 @@ js__on_handle_close(uv_handle_t *handle) {
   }
 }
 
+static inline void
+js__init_finalizer(js_env_t *env, js_finalizer_t *finalizer, void *data, js_finalize_cb finalize_cb, void *finalize_hint) {
+  finalizer->data = data;
+  finalizer->finalize_cb = finalize_cb;
+  finalizer->finalize_hint = finalize_hint;
+  finalizer->tracked = finalize_cb != NULL;
+
+  if (finalizer->tracked) intrusive_list_prepend(&env->finalizers, &finalizer->list);
+}
+
+static inline void
+js__untrack_finalizer(js_env_t *env, js_finalizer_t *finalizer) {
+  if (finalizer->tracked) intrusive_list_remove(&env->finalizers, &finalizer->list);
+
+  finalizer->tracked = false;
+}
+
+static inline void
+js__run_finalizer(js_env_t *env, js_finalizer_t *finalizer) {
+  js__untrack_finalizer(env, finalizer);
+
+  js_finalize_cb finalize_cb = finalizer->finalize_cb;
+
+  finalizer->finalize_cb = NULL;
+
+  if (finalize_cb) finalize_cb(env, finalizer->data, finalizer->finalize_hint);
+}
+
 static void
 js__close_env(js_env_t *env) {
+  // The callback of a finalizer may release what keeps another alive, so the
+  // list is drained from the head rather than iterated.
+  while (!intrusive_list_empty(&env->finalizers)) {
+    js__run_finalizer(env, intrusive_entry(env->finalizers.head, js_finalizer_t, list));
+  }
+
   intrusive_list_for_each(next, &env->deferreds) {
     js_deferred_t *deferred = intrusive_entry(next, js_deferred_t, list);
 
@@ -922,6 +941,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   env->promise_rejections = NULL;
 
   intrusive_list_init(&env->deferreds);
+  intrusive_list_init(&env->finalizers);
   intrusive_list_init(&env->teardown_queue.tasks);
 
   env->callbacks.uncaught_exception = NULL;
@@ -965,6 +985,10 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   env->prepare.data = (void *) env;
 
+  // Neither handle should keep the loop alive; there is nothing queued on the
+  // loop's behalf for them to hold it open for.
+  uv_unref((uv_handle_t *) &env->prepare);
+
   err = uv_check_init(loop, &env->check);
   assert(err == 0);
 
@@ -973,9 +997,6 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
 
   env->check.data = (void *) env;
 
-  // The check handle should not on its own keep the loop alive; it's simply
-  // used for running any outstanding tasks that might cause additional work
-  // to be queued.
   uv_unref((uv_handle_t *) &env->check);
 
   err = uv_async_init(loop, &env->teardown, js__on_teardown);
@@ -1979,6 +2000,7 @@ js__set_weak_reference(js_env_t *env, js_ref_t *reference) {
     finalizer->data = reference;
     finalizer->finalize_cb = js__on_reference_finalize;
     finalizer->finalize_hint = NULL;
+    finalizer->tracked = false;
 
     reference->symbol = JS_NewSymbol(env->context, "__native_reference", false);
 
@@ -2343,10 +2365,6 @@ js_wrap(js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_c
 
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
-  finalizer->data = data;
-  finalizer->finalize_cb = finalize_cb;
-  finalizer->finalize_hint = finalize_hint;
-
   JSValue external = JS_NewObjectClass(env->context, js__external_class_id);
 
   if (JS_IsException(external)) {
@@ -2380,6 +2398,8 @@ js_wrap(js_env_t *env, js_value_t *object, void *data, js_finalize_cb finalize_c
 
     return js__error(env);
   }
+
+  js__init_finalizer(env, finalizer, data, finalize_cb, finalize_hint);
 
   JS_SetOpaque(external, finalizer);
 
@@ -2445,6 +2465,8 @@ js_remove_wrap(js_env_t *env, js_value_t *object, void **result) {
   JS_SetOpaque(external, NULL);
 
   JS_FreeValue(env->context, external);
+
+  js__untrack_finalizer(env, finalizer);
 
   free(finalizer);
 
@@ -2580,9 +2602,7 @@ js__on_delegate_finalize(JSRuntime *runtime, JSValue value) {
 
   js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(value, js__delegate_class_id);
 
-  if (delegate->finalize_cb) {
-    delegate->finalize_cb(env, delegate->data, delegate->finalize_hint);
-  }
+  js__run_finalizer(env, &delegate->finalizer);
 
   free(delegate);
 }
@@ -2594,8 +2614,8 @@ js_create_delegate(js_env_t *env, const js_delegate_callbacks_t *callbacks, void
   js_delegate_t *delegate = malloc(sizeof(js_delegate_t));
 
   delegate->data = data;
-  delegate->finalize_cb = finalize_cb;
-  delegate->finalize_hint = finalize_hint;
+
+  js__init_finalizer(env, &delegate->finalizer, data, finalize_cb, finalize_hint);
 
   memcpy(&delegate->callbacks, callbacks, sizeof(js_delegate_callbacks_t));
 
@@ -2620,11 +2640,7 @@ js__on_finalizer_finalize(JSRuntime *runtime, JSValue value) {
   js_finalizer_list_t *prev;
 
   while (next) {
-    js_finalizer_t *finalizer = &next->finalizer;
-
-    if (finalizer->finalize_cb) {
-      finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
-    }
+    js__run_finalizer(env, &next->finalizer);
 
     prev = next;
     next = next->next;
@@ -2641,11 +2657,7 @@ js_add_finalizer(js_env_t *env, js_value_t *object, void *data, js_finalize_cb f
 
   js_finalizer_list_t *prev = malloc(sizeof(js_finalizer_list_t));
 
-  js_finalizer_t *finalizer = &prev->finalizer;
-
-  finalizer->data = data;
-  finalizer->finalize_cb = finalize_cb;
-  finalizer->finalize_hint = finalize_hint;
+  js__init_finalizer(env, &prev->finalizer, data, finalize_cb, finalize_hint);
 
   JSAtom atom = JS_NewAtom(env->context, "__native_finalizer");
 
@@ -3551,9 +3563,7 @@ js__on_external_finalize(JSRuntime *runtime, JSValue value) {
   // an opaque of its own.
   if (finalizer == NULL) return;
 
-  if (finalizer->finalize_cb) {
-    finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
-  }
+  js__run_finalizer(env, finalizer);
 
   free(finalizer);
 }
@@ -3564,9 +3574,7 @@ js_create_external(js_env_t *env, void *data, js_finalize_cb finalize_cb, void *
 
   js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
 
-  finalizer->data = data;
-  finalizer->finalize_cb = finalize_cb;
-  finalizer->finalize_hint = finalize_hint;
+  js__init_finalizer(env, finalizer, data, finalize_cb, finalize_hint);
 
   JSValue external = JS_NewObjectClass(env->context, js__external_class_id);
 
