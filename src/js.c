@@ -253,8 +253,9 @@ struct js_arraybuffer_backing_store_s {
   atomic_int references;
   size_t len;
   uint8_t *data;
-  JSValue owner;
-  bool shared;
+  bool external;
+  js_finalize_cb finalize_cb;
+  void *finalize_hint;
 };
 
 struct js_promise_rejection_s {
@@ -746,9 +747,16 @@ js__on_usable_size(const void *ptr) {
   return js__usable_size(ptr);
 }
 
+static inline js_arraybuffer_header_t *
+js__arraybuffer_header(void *ptr) {
+  return (js_arraybuffer_header_t *) ((char *) ptr - sizeof(js_arraybuffer_header_t));
+}
+
 static void *
-js__on_shared_malloc(void *opaque, size_t len) {
+js__on_arraybuffer_malloc(void *opaque, size_t len) {
   js_arraybuffer_header_t *header = malloc(sizeof(js_arraybuffer_header_t) + len);
+
+  if (header == NULL) return NULL;
 
   header->len = len;
   header->data = (uint8_t *) header + sizeof(*header);
@@ -759,8 +767,8 @@ js__on_shared_malloc(void *opaque, size_t len) {
 }
 
 static void
-js__on_shared_free(void *opaque, void *ptr) {
-  js_arraybuffer_header_t *header = (js_arraybuffer_header_t *) ((char *) ptr - sizeof(js_arraybuffer_header_t));
+js__on_arraybuffer_free(void *opaque, void *ptr) {
+  js_arraybuffer_header_t *header = js__arraybuffer_header(ptr);
 
   if (atomic_fetch_sub_explicit(&header->references, 1, memory_order_acq_rel) == 1) {
     free(header);
@@ -768,10 +776,38 @@ js__on_shared_free(void *opaque, void *ptr) {
 }
 
 static void
-js__on_shared_dup(void *opaque, void *ptr) {
-  js_arraybuffer_header_t *header = (js_arraybuffer_header_t *) ((char *) ptr - sizeof(js_arraybuffer_header_t));
+js__on_arraybuffer_dup(void *opaque, void *ptr) {
+  js_arraybuffer_header_t *header = js__arraybuffer_header(ptr);
 
   atomic_fetch_add_explicit(&header->references, 1, memory_order_acq_rel);
+}
+
+static void *
+js__on_arraybuffer_realloc(void *opaque, void *ptr, size_t len) {
+  js_arraybuffer_header_t *header = js__arraybuffer_header(ptr);
+
+  // Memory shared with a backing store must stay where it is, so the buffer
+  // moves to a copy instead.
+  if (atomic_load_explicit(&header->references, memory_order_acquire) > 1) {
+    void *copy = js__on_arraybuffer_malloc(opaque, len);
+
+    if (copy == NULL) return NULL;
+
+    memcpy(copy, ptr, len < header->len ? len : header->len);
+
+    js__on_arraybuffer_free(opaque, ptr);
+
+    return copy;
+  }
+
+  header = realloc(header, sizeof(js_arraybuffer_header_t) + len);
+
+  if (header == NULL) return NULL;
+
+  header->len = len;
+  header->data = (uint8_t *) header + sizeof(*header);
+
+  return header->data;
 }
 
 static void
@@ -876,10 +912,20 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   JS_SetSharedArrayBufferFunctions(
     runtime,
     &(JSSharedArrayBufferFunctions){
-      .sab_alloc = js__on_shared_malloc,
-      .sab_free = js__on_shared_free,
-      .sab_dup = js__on_shared_dup,
+      .sab_alloc = js__on_arraybuffer_malloc,
+      .sab_free = js__on_arraybuffer_free,
+      .sab_dup = js__on_arraybuffer_dup,
       .sab_opaque = NULL,
+    }
+  );
+
+  JS_SetArrayBufferFunctions(
+    runtime,
+    &(JSArrayBufferFunctions){
+      .ab_alloc = js__on_arraybuffer_malloc,
+      .ab_free = js__on_arraybuffer_free,
+      .ab_realloc = js__on_arraybuffer_realloc,
+      .ab_opaque = NULL,
     }
   );
 
@@ -3826,7 +3872,9 @@ js_get_promise_result(js_env_t *env, js_value_t *promise, js_value_t **result) {
 
 static void
 js__on_arraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) {
-  free(ptr);
+  if (ptr == NULL) return;
+
+  js__on_arraybuffer_free(NULL, ptr);
 }
 
 int
@@ -3837,7 +3885,7 @@ js_create_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t **resul
 
   if (len > INT32_MAX) goto err;
 
-  uint8_t *bytes = malloc(len);
+  uint8_t *bytes = js__on_arraybuffer_malloc(NULL, len);
 
   if (bytes == NULL) goto err;
 
@@ -3865,21 +3913,31 @@ err:
 }
 
 static void
-js__on_backed_arraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) {
-  js_arraybuffer_backing_store_t *backing_store = (js_arraybuffer_backing_store_t *) opaque;
+js__release_backing_store(js_env_t *env, js_arraybuffer_backing_store_t *backing_store) {
+  if (--backing_store->references > 0) return;
 
-  if (--backing_store->references == 0) {
-    JS_FreeValueRT(runtime, backing_store->owner);
-
-    free(backing_store);
+  if (backing_store->external) {
+    if (backing_store->finalize_cb) {
+      backing_store->finalize_cb(env, backing_store->data, backing_store->finalize_hint);
+    }
+  } else if (backing_store->data) {
+    js__on_arraybuffer_free(NULL, backing_store->data);
   }
+
+  free(backing_store);
+}
+
+static void
+js__on_backed_arraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) {
+  // Detaching the buffer already released it.
+  if (ptr == NULL) return;
+
+  js__release_backing_store((js_env_t *) JS_GetRuntimeOpaque(runtime), (js_arraybuffer_backing_store_t *) opaque);
 }
 
 int
 js_create_arraybuffer_with_backing_store(js_env_t *env, js_arraybuffer_backing_store_t *backing_store, void **data, size_t *len, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
-
-  backing_store->references++;
 
   if (data) {
     *data = backing_store->data;
@@ -3889,7 +3947,15 @@ js_create_arraybuffer_with_backing_store(js_env_t *env, js_arraybuffer_backing_s
     *len = backing_store->len;
   }
 
-  JSValue arraybuffer = JS_NewArrayBuffer(env->context, backing_store->data, backing_store->len, js__on_backed_arraybuffer_finalize, backing_store, false);
+  JSValue arraybuffer;
+
+  if (backing_store->data) {
+    backing_store->references++;
+
+    arraybuffer = JS_NewArrayBuffer(env->context, backing_store->data, backing_store->len, js__on_backed_arraybuffer_finalize, backing_store, false);
+  } else {
+    arraybuffer = JS_NewArrayBuffer(env->context, NULL, 0, NULL, NULL, false);
+  }
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
@@ -3900,11 +3966,6 @@ js_create_arraybuffer_with_backing_store(js_env_t *env, js_arraybuffer_backing_s
   return 0;
 }
 
-static void
-js__on_unsafe_arraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) {
-  free(ptr);
-}
-
 int
 js_create_unsafe_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
@@ -3913,7 +3974,7 @@ js_create_unsafe_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t 
 
   if (len > INT32_MAX) goto err;
 
-  uint8_t *bytes = malloc(len);
+  uint8_t *bytes = js__on_arraybuffer_malloc(NULL, len);
 
   if (bytes == NULL) goto err;
 
@@ -3921,7 +3982,7 @@ js_create_unsafe_arraybuffer(js_env_t *env, size_t len, void **data, js_value_t 
     *data = bytes;
   }
 
-  JSValue arraybuffer = JS_NewArrayBuffer(env->context, bytes, len, js__on_unsafe_arraybuffer_finalize, NULL, false);
+  JSValue arraybuffer = JS_NewArrayBuffer(env->context, bytes, len, js__on_arraybuffer_finalize, NULL, false);
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
@@ -3938,32 +3999,26 @@ err:
   return js__error(env);
 }
 
-static void
-js__on_external_arraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) {
-  if (ptr == NULL) return;
-
-  js_env_t *env = (js_env_t *) JS_GetRuntimeOpaque(runtime);
-
-  js_finalizer_t *finalizer = (js_finalizer_t *) opaque;
-
-  if (finalizer->finalize_cb) {
-    finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
-  }
-
-  free(finalizer);
-}
-
 int
 js_create_external_arraybuffer(js_env_t *env, void *data, size_t len, js_finalize_cb finalize_cb, void *finalize_hint, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
-  js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
+  JSValue arraybuffer;
 
-  finalizer->data = data;
-  finalizer->finalize_cb = finalize_cb;
-  finalizer->finalize_hint = finalize_hint;
+  if (data) {
+    js_arraybuffer_backing_store_t *backing_store = malloc(sizeof(js_arraybuffer_backing_store_t));
 
-  JSValue arraybuffer = JS_NewArrayBuffer(env->context, (uint8_t *) data, len, js__on_external_arraybuffer_finalize, (void *) finalizer, false);
+    backing_store->references = 1;
+    backing_store->len = len;
+    backing_store->data = data;
+    backing_store->external = true;
+    backing_store->finalize_cb = finalize_cb;
+    backing_store->finalize_hint = finalize_hint;
+
+    arraybuffer = JS_NewArrayBuffer(env->context, (uint8_t *) data, len, js__on_backed_arraybuffer_finalize, backing_store, false);
+  } else {
+    arraybuffer = JS_NewArrayBuffer(env->context, NULL, 0, NULL, NULL, false);
+  }
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
@@ -3987,15 +4042,34 @@ int
 js_get_arraybuffer_backing_store(js_env_t *env, js_value_t *arraybuffer, js_arraybuffer_backing_store_t **result) {
   // Allow continuing even with a pending exception
 
+  void *opaque;
+
+  JSFreeArrayBufferDataFunc *free_func = JS_GetArrayBufferFreeFunc(env->context, arraybuffer->value, &opaque);
+
+  if (free_func == js__on_backed_arraybuffer_finalize) {
+    js_arraybuffer_backing_store_t *backing_store = (js_arraybuffer_backing_store_t *) opaque;
+
+    backing_store->references++;
+
+    *result = backing_store;
+
+    return 0;
+  }
+
   js_arraybuffer_backing_store_t *backing_store = malloc(sizeof(js_arraybuffer_backing_store_t));
 
   backing_store->references = 1;
+  backing_store->external = false;
 
-  backing_store->data = JS_GetArrayBuffer(env->context, &backing_store->len, arraybuffer->value);
+  // Any other buffer that is not detached holds memory with a header.
+  if (free_func) {
+    backing_store->data = JS_GetArrayBuffer(env->context, &backing_store->len, arraybuffer->value);
 
-  backing_store->owner = JS_DupValue(env->context, arraybuffer->value);
-
-  backing_store->shared = false;
+    js__on_arraybuffer_dup(NULL, backing_store->data);
+  } else {
+    backing_store->data = NULL;
+    backing_store->len = 0;
+  }
 
   *result = backing_store;
 
@@ -4092,14 +4166,11 @@ js_get_sharedarraybuffer_backing_store(js_env_t *env, js_value_t *sharedarraybuf
   js_arraybuffer_backing_store_t *backing_store = malloc(sizeof(js_arraybuffer_backing_store_t));
 
   backing_store->references = 1;
+  backing_store->external = false;
 
   backing_store->data = JS_GetArrayBuffer(env->context, &backing_store->len, sharedarraybuffer->value);
 
-  backing_store->owner = JS_NULL;
-
-  backing_store->shared = true;
-
-  js__on_shared_dup(NULL, backing_store->data);
+  js__on_arraybuffer_dup(NULL, backing_store->data);
 
   *result = backing_store;
 
@@ -4110,15 +4181,7 @@ int
 js_release_arraybuffer_backing_store(js_env_t *env, js_arraybuffer_backing_store_t *backing_store) {
   // Allow continuing even with a pending exception
 
-  if (--backing_store->references == 0) {
-    if (backing_store->shared) {
-      js__on_shared_free(NULL, backing_store->data);
-    } else {
-      JS_FreeValue(env->context, backing_store->owner);
-    }
-
-    free(backing_store);
-  }
+  js__release_backing_store(env, backing_store);
 
   return 0;
 }
