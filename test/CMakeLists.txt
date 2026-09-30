@@ -1,5 +1,6 @@
 list(APPEND tests
   add-finalizer
+  add-finalizer-destroy-env
   add-teardown-callback
   add-teardown-callback-deferred
   add-teardown-callback-deferred-remove
@@ -50,6 +51,7 @@ list(APPEND tests
   create-delegate-has-throw
   create-delegate-keys-throw
   create-delegate-set-throw
+  create-delegate-with-finalizer-destroy-env
   create-env
   create-env-multiple
   create-env-multiple-concurrent
@@ -67,9 +69,11 @@ list(APPEND tests
   create-external-string-utf16le
   create-external-string-utf16le-with-finalizer
   create-external-with-finalizer
+  create-external-with-finalizer-destroy-env
   create-function
   create-function-args-extra
   create-function-args-fewer
+  create-function-churn-with-collection
   create-function-return-double
   create-function-throw
   create-function-throw-indirect
@@ -87,6 +91,8 @@ list(APPEND tests
   create-reference-array
   create-reference-bigint
   create-reference-boolean
+  create-reference-churn
+  create-reference-churn-with-collection
   create-reference-function
   create-reference-null
   create-reference-number
@@ -98,6 +104,7 @@ list(APPEND tests
   create-reference-undefined
   create-sharedarraybuffer
   create-sharedarraybuffer-with-backing-store
+  create-sharedarraybuffer-with-backing-store-across-envs
   create-string-latin1
   create-string-too-long
   create-string-utf8
@@ -110,6 +117,7 @@ list(APPEND tests
   create-threadsafe-function-with-finalizer
   create-typed-errors
   create-typed-function
+  create-typed-function-multiple
   create-typed-function-no-jit
   create-typed-function-with-arraybuffer
   create-typed-function-with-bigint64
@@ -144,6 +152,7 @@ list(APPEND tests
   dynamic-import-handler-code-cache
   dynamic-import-module-handler
   dynamic-import-script-handler
+  dynamic-import-throw
   dynamic-import-with-promise
   dynamic-import-with-referrer
   dynamic-import-with-referrer-function
@@ -338,6 +347,7 @@ list(APPEND tests
   wrap-remove-with-finalizer
   wrap-twice
   wrap-with-finalizer
+  wrap-with-finalizer-destroy-env
   wrap-with-reference
 )
 
@@ -357,6 +367,7 @@ list(APPEND skipped_tests
 
   # Not supported
   create-typed-function
+  create-typed-function-multiple
   create-typed-function-with-arraybuffer
   create-typed-function-with-bigint64
   create-typed-function-with-biguint64
@@ -395,6 +406,7 @@ list(APPEND skipped_tests
   dynamic-import-handler-code-cache
   dynamic-import-module-handler
   dynamic-import-script-handler
+  dynamic-import-throw
   dynamic-import-with-promise
   dynamic-import-with-referrer
   dynamic-import-with-referrer-function

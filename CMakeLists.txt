@@ -11,7 +11,6 @@ fetch_package(
     patches/001-get-version.patch
     patches/002-type-predicates.patch
     patches/003-coercion.patch
-    patches/004-new-symbol.patch
     patches/005-uncatchable-error.patch
     patches/006-portable-time.patch
     patches/007-windows-atomics.patch
