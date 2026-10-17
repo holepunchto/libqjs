@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 27183d9..eb8c78c 100644
+index 568d2b2..4da5c6d 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -37381,10 +37381,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
+@@ -37794,10 +37794,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
      fun_obj = js_create_function(ctx, fd);
      if (JS_IsException(fun_obj))
          goto fail1;
@@ -18,7 +18,7 @@ index 27183d9..eb8c78c 100644
          fun_obj = JS_NewModuleValue(ctx, m);
      }
 diff --git a/quickjs.h b/quickjs.h
-index 9b5e159..cb8038d 100644
+index 2130b52..e118a34 100644
 --- a/quickjs.h
 +++ b/quickjs.h
 @@ -340,6 +340,11 @@ static inline JSValue __JS_NewShortBigInt(JSContext *ctx, int64_t d)

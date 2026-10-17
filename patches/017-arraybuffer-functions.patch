@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 508d274..817196e 100644
+index 286c0e3..c8d051e 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -392,6 +392,8 @@ struct JSRuntime {
+@@ -394,6 +394,8 @@ struct JSRuntime {
      BOOL can_block : 8; /* TRUE if Atomics.wait can block */
      /* used to allocate, free and clone SharedArrayBuffers */
      JSSharedArrayBufferFunctions sab_funcs;
@@ -11,7 +11,7 @@ index 508d274..817196e 100644
      /* see JS_SetStripInfo() */
      uint8_t strip_flags;
      
-@@ -2264,6 +2266,12 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
+@@ -2296,6 +2298,12 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
      rt->sab_funcs = *sf;
  }
  
@@ -24,7 +24,7 @@ index 508d274..817196e 100644
  void JS_SetStripInfo(JSRuntime *rt, int flags)
  {
      rt->strip_flags = flags;
-@@ -57141,6 +57149,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -59188,6 +59196,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
              if (!abuf->data)
                  goto fail;
              memset(abuf->data, 0, sab_alloc_len);
@@ -39,7 +39,7 @@ index 508d274..817196e 100644
          } else {
              /* the allocation must be done after the object creation */
              abuf->data = js_mallocz(ctx, max_int(len, 1));
-@@ -57171,7 +57187,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -59218,7 +59234,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
  
  static void js_array_buffer_free(JSRuntime *rt, void *opaque, void *ptr)
  {
@@ -64,7 +64,7 @@ index 508d274..817196e 100644
  }
  
  static JSValue js_array_buffer_constructor2(JSContext *ctx,
-@@ -57432,6 +57464,19 @@ void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj)
+@@ -59479,6 +59511,19 @@ void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj)
      js_array_buffer_update_typed_arrays(abuf);
  }
  
@@ -84,7 +84,7 @@ index 508d274..817196e 100644
  /* get an ArrayBuffer or SharedArrayBuffer */
  static JSArrayBuffer *js_get_array_buffer(JSContext *ctx, JSValueConst obj)
  {
-@@ -57540,7 +57585,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -59587,7 +59632,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  res = js_array_buffer_constructor2(ctx, JS_UNDEFINED, 0, pmax_len, JS_CLASS_ARRAY_BUFFER);
                  if (JS_IsException(res))
                      return res;
@@ -93,7 +93,7 @@ index 508d274..817196e 100644
                  if (!new_bs) {
                      JS_FreeValue(ctx, res);
                      return JS_EXCEPTION;
-@@ -57548,7 +57593,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -59595,7 +59640,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  if (new_len > old_len)
                      memset(new_bs + old_len, 0, new_len - old_len);
                  new_abuf = JS_GetOpaque2(ctx, res, JS_CLASS_ARRAY_BUFFER);
@@ -102,7 +102,7 @@ index 508d274..817196e 100644
                  new_abuf->data = new_bs;
                  new_abuf->byte_length = new_len;
              }
-@@ -57608,7 +57653,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
+@@ -59655,7 +59700,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
          // 2 bytes big in A, and 1 byte big in B
          abuf->byte_length = len;
      } else {
@@ -112,10 +112,10 @@ index 508d274..817196e 100644
              return JS_EXCEPTION;
          if (len > abuf->byte_length)
 diff --git a/quickjs.h b/quickjs.h
-index dfb4774..c9cc14f 100644
+index 10ea355..2bbc5b6 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -923,6 +923,11 @@ JSValue JS_NewArrayBuffer(JSContext *ctx, uint8_t *buf, size_t len,
+@@ -953,6 +953,11 @@ JSValue JS_NewArrayBuffer(JSContext *ctx, uint8_t *buf, size_t len,
  JSValue JS_NewArrayBufferCopy(JSContext *ctx, const uint8_t *buf, size_t len);
  void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj);
  uint8_t *JS_GetArrayBuffer(JSContext *ctx, size_t *psize, JSValueConst obj);
@@ -127,7 +127,7 @@ index dfb4774..c9cc14f 100644
  
  typedef enum JSTypedArrayEnum {
      JS_TYPED_ARRAY_UINT8C = 0,
-@@ -959,6 +964,17 @@ typedef struct {
+@@ -989,6 +994,17 @@ typedef struct {
  void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
                                        const JSSharedArrayBufferFunctions *sf);
  
