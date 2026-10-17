@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 110e9f1..0b44c3d 100644
+index e20c3ee..a012635 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -3851,6 +3851,108 @@ JSClassID JS_GetClassID(JSValue v)
+@@ -3913,6 +3913,108 @@ JSClassID JS_GetClassID(JSValue v)
      return p->class_id;
  }
  
@@ -112,10 +112,10 @@ index 110e9f1..0b44c3d 100644
  {
      return (class_id < rt->class_count &&
 diff --git a/quickjs.h b/quickjs.h
-index 682ab64..d195f74 100644
+index e525982..f4ceccf 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -771,6 +771,26 @@ JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val)
+@@ -804,6 +804,26 @@ JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val)
  
  JSValue JS_NewArray(JSContext *ctx);
  int JS_IsArray(JSContext *ctx, JSValueConst val);
@@ -141,4 +141,4 @@ index 682ab64..d195f74 100644
 +JS_BOOL JS_IsModuleNamespace(JSValueConst val);
  
  JSValue JS_NewDate(JSContext *ctx, double epoch_ms);
- 
+ int JS_ThisDateValue(JSContext *ctx, double *valp, JSValueConst this_val);

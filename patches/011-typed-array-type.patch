@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 2aa7d6e..0ad3d7a 100644
+index 9d5e922..7443597 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -3987,6 +3987,14 @@ JS_BOOL JS_IsModuleNamespace(JSValueConst v)
+@@ -4029,6 +4029,14 @@ JS_BOOL JS_IsModuleNamespace(JSValueConst v)
      return JS_GetClassID(v) == JS_CLASS_MODULE_NS;
  }
  
@@ -18,10 +18,10 @@ index 2aa7d6e..0ad3d7a 100644
  {
      return (class_id < rt->class_count &&
 diff --git a/quickjs.h b/quickjs.h
-index 15bcb15..b20e18a 100644
+index 24b5a2a..255553f 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -923,6 +923,7 @@ typedef enum JSTypedArrayEnum {
+@@ -957,6 +957,7 @@ typedef enum JSTypedArrayEnum {
  
  JSValue JS_NewTypedArray(JSContext *ctx, int argc, JSValueConst *argv,
                           JSTypedArrayEnum array_type);
