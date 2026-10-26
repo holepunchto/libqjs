@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 286c0e3..c8d051e 100644
+index fb6a46f..7573687 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -394,6 +394,8 @@ struct JSRuntime {
+@@ -397,6 +397,8 @@ struct JSRuntime {
      BOOL can_block : 8; /* TRUE if Atomics.wait can block */
      /* used to allocate, free and clone SharedArrayBuffers */
      JSSharedArrayBufferFunctions sab_funcs;
@@ -11,7 +11,7 @@ index 286c0e3..c8d051e 100644
      /* see JS_SetStripInfo() */
      uint8_t strip_flags;
      
-@@ -2296,6 +2298,12 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
+@@ -2314,6 +2316,12 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
      rt->sab_funcs = *sf;
  }
  
@@ -24,7 +24,7 @@ index 286c0e3..c8d051e 100644
  void JS_SetStripInfo(JSRuntime *rt, int flags)
  {
      rt->strip_flags = flags;
-@@ -59188,6 +59196,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -60577,6 +60585,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
              if (!abuf->data)
                  goto fail;
              memset(abuf->data, 0, sab_alloc_len);
@@ -39,7 +39,7 @@ index 286c0e3..c8d051e 100644
          } else {
              /* the allocation must be done after the object creation */
              abuf->data = js_mallocz(ctx, max_int(len, 1));
-@@ -59218,7 +59234,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -60607,7 +60623,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
  
  static void js_array_buffer_free(JSRuntime *rt, void *opaque, void *ptr)
  {
@@ -64,7 +64,7 @@ index 286c0e3..c8d051e 100644
  }
  
  static JSValue js_array_buffer_constructor2(JSContext *ctx,
-@@ -59479,6 +59511,19 @@ void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj)
+@@ -60868,6 +60900,19 @@ void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj)
      js_array_buffer_update_typed_arrays(abuf);
  }
  
@@ -84,7 +84,7 @@ index 286c0e3..c8d051e 100644
  /* get an ArrayBuffer or SharedArrayBuffer */
  static JSArrayBuffer *js_get_array_buffer(JSContext *ctx, JSValueConst obj)
  {
-@@ -59587,7 +59632,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -60976,7 +61021,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  res = js_array_buffer_constructor2(ctx, JS_UNDEFINED, 0, pmax_len, JS_CLASS_ARRAY_BUFFER);
                  if (JS_IsException(res))
                      return res;
@@ -93,7 +93,7 @@ index 286c0e3..c8d051e 100644
                  if (!new_bs) {
                      JS_FreeValue(ctx, res);
                      return JS_EXCEPTION;
-@@ -59595,7 +59640,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -60984,7 +61029,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  if (new_len > old_len)
                      memset(new_bs + old_len, 0, new_len - old_len);
                  new_abuf = JS_GetOpaque2(ctx, res, JS_CLASS_ARRAY_BUFFER);
@@ -102,7 +102,7 @@ index 286c0e3..c8d051e 100644
                  new_abuf->data = new_bs;
                  new_abuf->byte_length = new_len;
              }
-@@ -59655,7 +59700,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
+@@ -61044,7 +61089,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
          // 2 bytes big in A, and 1 byte big in B
          abuf->byte_length = len;
      } else {
@@ -112,7 +112,7 @@ index 286c0e3..c8d051e 100644
              return JS_EXCEPTION;
          if (len > abuf->byte_length)
 diff --git a/quickjs.h b/quickjs.h
-index 10ea355..2bbc5b6 100644
+index 761e299..99cf148 100644
 --- a/quickjs.h
 +++ b/quickjs.h
 @@ -953,6 +953,11 @@ JSValue JS_NewArrayBuffer(JSContext *ctx, uint8_t *buf, size_t len,
@@ -127,10 +127,11 @@ index 10ea355..2bbc5b6 100644
  
  typedef enum JSTypedArrayEnum {
      JS_TYPED_ARRAY_UINT8C = 0,
-@@ -989,6 +994,17 @@ typedef struct {
+@@ -988,6 +993,18 @@ typedef struct {
+ } JSSharedArrayBufferFunctions;
  void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
                                        const JSSharedArrayBufferFunctions *sf);
- 
++
 +/* used together, in place of the runtime allocator, for the data of the
 +   ArrayBuffers that the runtime allocates itself */
 +typedef struct {
@@ -142,6 +143,6 @@ index 10ea355..2bbc5b6 100644
 +void JS_SetArrayBufferFunctions(JSRuntime *rt,
 +                                const JSArrayBufferFunctions *af);
 +
- typedef enum JSPromiseStateEnum {
-     JS_PROMISE_PENDING,
-     JS_PROMISE_FULFILLED,
+ int64_t JS_AtomicsPollWaiters(JSContext *ctx);
+ typedef void JS_AtomicsAsyncWaker(JSRuntime *rt, void *opaque);
+ void JS_AtomicsSetAsyncWaker(JS_AtomicsAsyncWaker *cb, void *opaque);
