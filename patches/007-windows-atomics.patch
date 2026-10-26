@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index be579cb..a52a98d 100644
+index bf30c71..29b4d6e 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -67,7 +67,7 @@
@@ -11,3 +11,23 @@ index be579cb..a52a98d 100644
  #define CONFIG_ATOMICS
  #endif
  
+@@ -1247,7 +1247,9 @@ static void js_iterator_wrap_mark(JSRuntime *rt, JSValueConst val,
+ static void js_iterator_zip_finalizer(JSRuntime *rt, JSValue val);
+ static void js_iterator_zip_mark(JSRuntime *rt, JSValueConst val,
+                                  JS_MarkFunc *mark_func);
++#ifdef CONFIG_ATOMICS
+ static void js_atomics_free_waiters(JSRuntime *rt);
++#endif
+ static void js_array_from_async_finalizer(JSRuntime *rt, JSValue val);
+ static void js_array_from_async_mark(JSRuntime *rt, JSValueConst val,
+                                      JS_MarkFunc *mark_func);
+@@ -2467,7 +2469,9 @@ void JS_FreeRuntime(JSRuntime *rt)
+         js_free_rt(rt, e);
+     }
+     init_list_head(&rt->job_list);
++#ifdef CONFIG_ATOMICS
+     js_atomics_free_waiters(rt);
++#endif
+ 
+     /* don't remove the weak objects to avoid create new jobs with
+        FinalizationRegistry */
