@@ -3295,7 +3295,7 @@ js__function_source(js_env_t *env, const char *name, size_t name_len, js_value_t
   buf_len += strlen(str);
   JS_FreeCString(env->context, str);
 
-  buf_len += strlen("}\n");
+  buf_len += strlen("\n}\n");
 
   if (name) {
     if (name_len == (size_t) -1) buf_len += strlen(name);
@@ -3333,7 +3333,7 @@ js__function_source(js_env_t *env, const char *name, size_t name_len, js_value_t
   strcat(buf, str);
   JS_FreeCString(env->context, str);
 
-  strcat(buf, "}\n");
+  strcat(buf, "\n}\n");
 
   if (name) {
     if (name_len == (size_t) -1) strcat(buf, name);
