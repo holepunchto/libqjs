@@ -1,8 +1,16 @@
 diff --git a/quickjs.c b/quickjs.c
-index fb6a46f..7573687 100644
+index d839210..a6f065b 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -397,6 +397,8 @@ struct JSRuntime {
+@@ -358,6 +358,7 @@ struct JSRuntime {
+     struct list_head tmp_obj_list; /* used during GC */
+     JSGCPhaseEnum gc_phase : 8;
+     size_t malloc_gc_threshold;
++    size_t ab_malloc_size;
+     struct list_head weakref_list; /* list of JSWeakRefHeader.link */
+ #ifdef DUMP_LEAKS
+     struct list_head string_list; /* list of JSString.link */
+@@ -397,6 +398,8 @@ struct JSRuntime {
      BOOL can_block : 8; /* TRUE if Atomics.wait can block */
      /* used to allocate, free and clone SharedArrayBuffers */
      JSSharedArrayBufferFunctions sab_funcs;
@@ -11,7 +19,38 @@ index fb6a46f..7573687 100644
      /* see JS_SetStripInfo() */
      uint8_t strip_flags;
      
-@@ -2314,6 +2316,12 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
+@@ -789,6 +792,7 @@ typedef struct JSArrayBuffer {
+     struct list_head array_list;
+     void *opaque;
+     JSFreeArrayBufferDataFunc *free_func;
++    size_t tracked_bytes;
+ } JSArrayBuffer;
+ 
+ typedef struct JSTypedArray {
+@@ -1824,17 +1828,18 @@ static void js_trigger_gc(JSRuntime *rt, size_t size)
+ #ifdef FORCE_GC_AT_MALLOC
+     force_gc = TRUE;
+ #else
+-    force_gc = ((rt->malloc_ctx.malloc_state.malloc_size + size) >
++    force_gc = ((rt->malloc_ctx.malloc_state.malloc_size + rt->ab_malloc_size + size) >
+                 rt->malloc_gc_threshold);
+ #endif
+     if (force_gc) {
++        size_t total;
+ #ifdef DUMP_GC
+         printf("GC: size=%" PRIu64 "\n",
+-               (uint64_t)rt->malloc_ctx.malloc_state.malloc_size);
++               (uint64_t)(rt->malloc_ctx.malloc_state.malloc_size + rt->ab_malloc_size));
+ #endif
+         JS_RunGC(rt);
+-        rt->malloc_gc_threshold = rt->malloc_ctx.malloc_state.malloc_size +
+-            (rt->malloc_ctx.malloc_state.malloc_size >> 1);
++        total = rt->malloc_ctx.malloc_state.malloc_size + rt->ab_malloc_size;
++        rt->malloc_gc_threshold = total + (total >> 1);
+     }
+ }
+ 
+@@ -2316,6 +2321,12 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
      rt->sab_funcs = *sf;
  }
  
@@ -24,7 +63,35 @@ index fb6a46f..7573687 100644
  void JS_SetStripInfo(JSRuntime *rt, int flags)
  {
      rt->strip_flags = flags;
-@@ -60577,6 +60585,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -60533,6 +60544,19 @@ static uint8_t const typed_array_size_log2[JS_TYPED_ARRAY_COUNT] = {
+     1, 2, 3                 // Float16Array, Float32Array, Float64Array
+ };
+ 
++static void js_abuf_track(JSRuntime *rt, JSArrayBuffer *abuf, size_t bytes)
++{
++    abuf->tracked_bytes = bytes;
++    rt->ab_malloc_size += bytes;
++}
++
++static void js_abuf_untrack(JSRuntime *rt, JSArrayBuffer *abuf)
++{
++    assert(rt->ab_malloc_size >= abuf->tracked_bytes);
++    rt->ab_malloc_size -= abuf->tracked_bytes;
++    abuf->tracked_bytes = 0;
++}
++
+ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+                                             JSValueConst new_target,
+                                             uint64_t len, uint64_t *max_len,
+@@ -60570,6 +60594,7 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+         goto fail;
+     abuf->byte_length = len;
+     abuf->max_byte_length = max_len ? *max_len : -1;
++    abuf->tracked_bytes = 0;
+     if (alloc_flag) {
+         if (class_id == JS_CLASS_SHARED_ARRAY_BUFFER &&
+             rt->sab_funcs.sab_alloc) {
+@@ -60581,6 +60606,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
              if (!abuf->data)
                  goto fail;
              memset(abuf->data, 0, sab_alloc_len);
@@ -39,7 +106,30 @@ index fb6a46f..7573687 100644
          } else {
              /* the allocation must be done after the object creation */
              abuf->data = js_mallocz(ctx, max_int(len, 1));
-@@ -60607,7 +60623,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -60601,7 +60634,22 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+     abuf->free_func = free_func;
+     if (alloc_flag && buf)
+         memcpy(abuf->data, buf, len);
++    if (alloc_flag) {
++        if (class_id == JS_CLASS_SHARED_ARRAY_BUFFER && rt->sab_funcs.sab_alloc)
++            js_abuf_track(rt, abuf, sab_alloc_len);
++        else if (rt->ab_funcs.ab_alloc)
++            js_abuf_track(rt, abuf, len);
++    } else if (class_id == JS_CLASS_SHARED_ARRAY_BUFFER) {
++        if (rt->sab_funcs.sab_free) {
++            sab_alloc_len = max_len ? *max_len : len;
++            js_abuf_track(rt, abuf, sab_alloc_len);
++        }
++    } else if (free_func && (free_func != js_array_buffer_free || rt->ab_funcs.ab_alloc)) {
++        js_abuf_track(rt, abuf, len);
++    }
+     JS_SetOpaque(obj, abuf);
++    if (abuf->tracked_bytes)
++        js_trigger_gc(rt, 0);
+     return obj;
+  fail:
+     JS_FreeValue(ctx, obj);
+@@ -60611,7 +60659,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
  
  static void js_array_buffer_free(JSRuntime *rt, void *opaque, void *ptr)
  {
@@ -64,7 +154,22 @@ index fb6a46f..7573687 100644
  }
  
  static JSValue js_array_buffer_constructor2(JSContext *ctx,
-@@ -60868,6 +60900,19 @@ void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj)
+@@ -60734,6 +60798,7 @@ static void js_array_buffer_finalizer(JSRuntime *rt, JSValue val)
+             if (abuf->free_func)
+                 abuf->free_func(rt, abuf->opaque, abuf->data);
+         }
++        js_abuf_untrack(rt, abuf);
+         js_free_rt(rt, abuf);
+     }
+ }
+@@ -60866,12 +60931,26 @@ void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj)
+         return;
+     if (abuf->free_func)
+         abuf->free_func(ctx->rt, abuf->opaque, abuf->data);
++    js_abuf_untrack(ctx->rt, abuf);
+     abuf->data = NULL;
+     abuf->byte_length = 0;
+     abuf->detached = TRUE;
      js_array_buffer_update_typed_arrays(abuf);
  }
  
@@ -84,7 +189,7 @@ index fb6a46f..7573687 100644
  /* get an ArrayBuffer or SharedArrayBuffer */
  static JSArrayBuffer *js_get_array_buffer(JSContext *ctx, JSValueConst obj)
  {
-@@ -60976,7 +61021,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -60980,7 +61059,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  res = js_array_buffer_constructor2(ctx, JS_UNDEFINED, 0, pmax_len, JS_CLASS_ARRAY_BUFFER);
                  if (JS_IsException(res))
                      return res;
@@ -93,7 +198,7 @@ index fb6a46f..7573687 100644
                  if (!new_bs) {
                      JS_FreeValue(ctx, res);
                      return JS_EXCEPTION;
-@@ -60984,7 +61029,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -60988,9 +61067,11 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  if (new_len > old_len)
                      memset(new_bs + old_len, 0, new_len - old_len);
                  new_abuf = JS_GetOpaque2(ctx, res, JS_CLASS_ARRAY_BUFFER);
@@ -101,16 +206,42 @@ index fb6a46f..7573687 100644
 +                js_array_buffer_free(ctx->rt, NULL, new_abuf->data);
                  new_abuf->data = new_bs;
                  new_abuf->byte_length = new_len;
++                if (ctx->rt->ab_funcs.ab_alloc)
++                    js_abuf_track(ctx->rt, new_abuf, new_len);
              }
-@@ -61044,7 +61089,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
+         } else {
+             /* can keep the custom free function */
+@@ -61003,6 +61084,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+         }
+         /* neuter the backing buffer */
+         abuf->data = NULL;
++        js_abuf_untrack(ctx->rt, abuf);
+         abuf->byte_length = 0;
+         abuf->detached = TRUE;
+         js_array_buffer_update_typed_arrays(abuf);
+@@ -61048,13 +61130,21 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
          // 2 bytes big in A, and 1 byte big in B
          abuf->byte_length = len;
      } else {
 -        data = js_realloc(ctx, abuf->data, max_int(len, 1));
++        size_t old_tracked = abuf->tracked_bytes;
 +        data = js_array_buffer_realloc(ctx, abuf->data, max_int(len, 1));
          if (!data)
              return JS_EXCEPTION;
          if (len > abuf->byte_length)
+             memset(&data[abuf->byte_length], 0, len - abuf->byte_length);
+         abuf->byte_length = len;
+         abuf->data = data;
++        js_abuf_untrack(ctx->rt, abuf);
++        if (ctx->rt->ab_funcs.ab_alloc)
++            js_abuf_track(ctx->rt, abuf, len);
++        js_array_buffer_update_typed_arrays(abuf);
++        if (abuf->tracked_bytes > old_tracked)
++            js_trigger_gc(ctx->rt, 0);
++        return JS_UNDEFINED;
+     }
+     js_array_buffer_update_typed_arrays(abuf);
+     return JS_UNDEFINED;
 diff --git a/quickjs.h b/quickjs.h
 index 761e299..99cf148 100644
 --- a/quickjs.h
