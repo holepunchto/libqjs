@@ -1,0 +1,100 @@
+diff --git a/quickjs.c b/quickjs.c
+index 9647bfc..75b8b3e 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -65324,41 +65324,63 @@ static void weakref_delete_weakref(JSRuntime *rt, JSWeakRefHeader *wh)
+     }
+ }
+ 
+-static JSValue js_weakref_constructor(JSContext *ctx, JSValueConst new_target,
+-                                      int argc, JSValueConst *argv)
++static JSValue js_weakref_init(JSContext *ctx, JSValue obj, JSValueConst target)
+ {
+-    JSValueConst arg;
+-    JSValue obj;
++    JSWeakRefData *wrd;
+ 
+-    if (JS_IsUndefined(new_target))
+-        return JS_ThrowTypeError(ctx, "constructor requires 'new'");
+-    arg = argv[0];
+-    if (!js_weakref_is_target(arg))
+-        return JS_ThrowTypeError(ctx, "invalid target");
+-    obj = JS_CreateFromConstructor(ctx, new_target, JS_CLASS_WEAK_REF);
+     if (JS_IsException(obj))
+         return JS_EXCEPTION;
+-    JSWeakRefData *wrd = js_mallocz(ctx, sizeof(*wrd));
++    wrd = js_mallocz(ctx, sizeof(*wrd));
+     if (!wrd) {
+         JS_FreeValue(ctx, obj);
+         return JS_EXCEPTION;
+     }
+-    wrd->target = js_weakref_new(ctx, arg);
++    wrd->target = js_weakref_new(ctx, target);
+     wrd->weakref_header.weakref_type = JS_WEAKREF_TYPE_WEAKREF;
+     list_add_tail(&wrd->weakref_header.link, &ctx->rt->weakref_list);
+     JS_SetOpaque(obj, wrd);
+     return obj;
+ }
+ 
++static JSValue js_weakref_constructor(JSContext *ctx, JSValueConst new_target,
++                                      int argc, JSValueConst *argv)
++{
++    JSValueConst arg;
++    JSValue obj;
++
++    if (JS_IsUndefined(new_target))
++        return JS_ThrowTypeError(ctx, "constructor requires 'new'");
++    arg = argv[0];
++    if (!js_weakref_is_target(arg))
++        return JS_ThrowTypeError(ctx, "invalid target");
++    obj = JS_CreateFromConstructor(ctx, new_target, JS_CLASS_WEAK_REF);
++    return js_weakref_init(ctx, obj, arg);
++}
++
++JSValue JS_NewWeakRef(JSContext *ctx, JSValueConst target)
++{
++    JSValue obj;
++
++    if (!js_weakref_is_target(target))
++        return JS_ThrowTypeError(ctx, "invalid target");
++    obj = JS_NewObjectClass(ctx, JS_CLASS_WEAK_REF);
++    return js_weakref_init(ctx, obj, target);
++}
++
++JSValue JS_GetWeakRefTarget(JSContext *ctx, JSValueConst val)
++{
++    JSWeakRefData *wrd = JS_GetOpaque(val, JS_CLASS_WEAK_REF);
++    if (!wrd || !js_weakref_is_live(wrd->target))
++        return JS_UNDEFINED;
++    return JS_DupValue(ctx, wrd->target);
++}
++
+ static JSValue js_weakref_deref(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+ {
+     JSWeakRefData *wrd = JS_GetOpaque2(ctx, this_val, JS_CLASS_WEAK_REF);
+     if (!wrd)
+         return JS_EXCEPTION;
+-    if (js_weakref_is_live(wrd->target)) 
+-        return JS_DupValue(ctx, wrd->target);
+-    else
+-        return JS_UNDEFINED;
++    return JS_GetWeakRefTarget(ctx, this_val);
+ }
+ 
+ static const JSCFunctionListEntry js_weakref_proto_funcs[] = {
+diff --git a/quickjs.h b/quickjs.h
+index 99cf148..c5b325f 100644
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -819,6 +819,11 @@ JS_BOOL JS_IsFunction(JSContext* ctx, JSValueConst val);
+ JS_BOOL JS_IsConstructor(JSContext* ctx, JSValueConst val);
+ JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val);
+ 
++/* 'target' must be an object or a non-registered symbol */
++JSValue JS_NewWeakRef(JSContext *ctx, JSValueConst target);
++/* return JS_UNDEFINED if the target was collected */
++JSValue JS_GetWeakRefTarget(JSContext *ctx, JSValueConst val);
++
+ JSValue JS_NewArray(JSContext *ctx, uint32_t len);
+ int JS_IsArray(JSContext *ctx, JSValueConst val);
+ JS_BOOL JS_IsArrayBuffer(JSValueConst val);

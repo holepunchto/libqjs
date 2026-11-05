@@ -24,6 +24,7 @@ fetch_package(
     patches/015-defer-module-resolution.patch
     patches/016-boxed-type-predicates.patch
     patches/017-arraybuffer-functions.patch
+    patches/018-weakref.patch
 )
 
 file(READ ${qjs}/VERSION qjs_version)

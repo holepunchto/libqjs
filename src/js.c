@@ -102,6 +102,7 @@ struct js_env_s {
 
   intrusive_list_t deferreds;
   intrusive_list_t finalizers;
+  intrusive_list_t pending_finalizers;
 
   bool destroying;
 
@@ -185,7 +186,7 @@ struct js_context_s {
 
 struct js_ref_s {
   JSValue value;
-  JSValue symbol;
+  JSValue weakref;
   uint32_t count;
   bool finalized;
 };
@@ -287,6 +288,9 @@ struct js_threadsafe_function_s {
 };
 
 static const char *js__platform_identifier = "quickjs";
+
+static void
+js__run_pending_finalizers(js_env_t *env);
 
 static void
 js__on_external_finalize(JSRuntime *runtime, JSValue value);
@@ -667,11 +671,12 @@ js__on_prepare(uv_prepare_t *handle) {
 
 static void
 js__on_check(uv_check_t *handle) {
-  // Nothing is queued on the loop's behalf, so there is nothing to settle once
-  // it has polled. Were a macrotask queue ever added, its liveness would have
-  // to be held as work is queued rather than settled from here: the loop runs
-  // timers after the check phase, so what their callbacks queue cannot be
-  // observed from a check callback.
+  // Pending finalizers do not hold the loop open, as a collection would not be
+  // forced for them either. Were a macrotask queue ever added, its liveness
+  // would have to be held as work is queued rather than settled from here: the
+  // loop runs timers after the check phase, so what their callbacks queue
+  // cannot be observed from a check callback.
+  js__run_pending_finalizers((js_env_t *) handle->data);
 }
 
 static inline size_t
@@ -840,14 +845,46 @@ js__run_finalizer(js_env_t *env, js_finalizer_t *finalizer) {
   if (finalize_cb) finalize_cb(env, finalizer->data, finalizer->finalize_hint);
 }
 
+// The engine frees objects as soon as their last reference is dropped, which
+// may happen inside a call made by native code that is not yet done with what
+// the callback of a finalizer releases. Callbacks are therefore queued and run
+// once control is back with the loop, as they would be after a collection.
+static void
+js__defer_finalize(js_env_t *env, void *data, js_finalize_cb finalize_cb, void *finalize_hint) {
+  if (finalize_cb == NULL) return;
+
+  js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
+
+  finalizer->data = data;
+  finalizer->finalize_cb = finalize_cb;
+  finalizer->finalize_hint = finalize_hint;
+  finalizer->tracked = false;
+
+  intrusive_list_append(&env->pending_finalizers, &finalizer->list);
+}
+
+static inline void
+js__defer_finalizer(js_env_t *env, js_finalizer_t *finalizer) {
+  js__untrack_finalizer(env, finalizer);
+
+  js__defer_finalize(env, finalizer->data, finalizer->finalize_cb, finalizer->finalize_hint);
+}
+
+static void
+js__run_pending_finalizers(js_env_t *env) {
+  while (!intrusive_list_empty(&env->pending_finalizers)) {
+    js_finalizer_t *finalizer = intrusive_entry(env->pending_finalizers.head, js_finalizer_t, list);
+
+    intrusive_list_remove(&env->pending_finalizers, &finalizer->list);
+
+    finalizer->finalize_cb(env, finalizer->data, finalizer->finalize_hint);
+
+    free(finalizer);
+  }
+}
+
 static void
 js__close_env(js_env_t *env) {
-  // The callback of a finalizer may release what keeps another alive, so the
-  // list is drained from the head rather than iterated.
-  while (!intrusive_list_empty(&env->finalizers)) {
-    js__run_finalizer(env, intrusive_entry(env->finalizers.head, js_finalizer_t, list));
-  }
-
   intrusive_list_for_each(next, &env->deferreds) {
     js_deferred_t *deferred = intrusive_entry(next, js_deferred_t, list);
 
@@ -859,12 +896,26 @@ js__close_env(js_env_t *env) {
     free(deferred);
   }
 
+  // The callback of a finalizer may release what keeps another alive, so both
+  // lists are drained from the head until neither has anything left.
+  for (;;) {
+    js__run_pending_finalizers(env);
+
+    if (intrusive_list_empty(&env->finalizers)) break;
+
+    js__run_finalizer(env, intrusive_entry(env->finalizers.head, js_finalizer_t, list));
+  }
+
   JS_FreeValue(env->context, env->default_module_id);
   JS_FreeAtom(env->context, env->function_id_key);
   JS_FreeAtom(env->context, env->function_bytecode_key);
   JS_FreeValue(env->context, env->bindings);
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
+
+  // Freeing the runtime releases the backing stores of external ArrayBuffers
+  // that were still alive, whose callbacks are not tracked as finalizers.
+  js__run_pending_finalizers(env);
 
   uv_close((uv_handle_t *) &env->prepare, js__on_handle_close);
   uv_close((uv_handle_t *) &env->check, js__on_handle_close);
@@ -972,6 +1023,7 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   intrusive_list_init(&env->deferreds);
   intrusive_list_init(&env->synthetic_modules);
   intrusive_list_init(&env->finalizers);
+  intrusive_list_init(&env->pending_finalizers);
   intrusive_list_init(&env->teardown_queue.tasks);
 
   env->callbacks.uncaught_exception = NULL;
@@ -2017,77 +2069,35 @@ js_run_module(js_env_t *env, js_module_t *module, js_value_t **result) {
   return 0;
 }
 
-static void
-js__on_reference_finalize(js_env_t *env, void *data, void *finalize_hint) {
-  js_ref_t *reference = (js_ref_t *) data;
+static inline JSValue
+js__deref_weak_reference(js_env_t *env, js_ref_t *reference) {
+  JSValue value = JS_GetWeakRefTarget(env->context, reference->weakref);
 
-  JS_FreeValue(env->context, reference->symbol);
+  if (JS_IsUndefined(value)) reference->finalized = true;
 
-  reference->value = JS_NULL;
-  reference->count = 0;
-  reference->symbol = JS_NULL;
-  reference->finalized = true;
+  return value;
 }
 
 static inline void
 js__set_weak_reference(js_env_t *env, js_ref_t *reference) {
-  if (reference->finalized) return;
+  if (reference->finalized || !JS_IsObject(reference->value)) return;
 
-  if (JS_IsObject(reference->value)) {
-    int err;
+  reference->weakref = JS_NewWeakRef(env->context, reference->value);
 
-    js_finalizer_t *finalizer = malloc(sizeof(js_finalizer_t));
+  JS_FreeValue(env->context, reference->value);
 
-    finalizer->data = reference;
-    finalizer->finalize_cb = js__on_reference_finalize;
-    finalizer->finalize_hint = NULL;
-    finalizer->tracked = false;
-
-    reference->symbol = JS_NewSymbol(env->context, "__native_reference", false);
-
-    JSValue external = JS_NewObjectClass(env->context, js__external_class_id);
-
-    JS_SetOpaque(external, finalizer);
-
-    JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
-
-    err = JS_DefinePropertyValue(env->context, reference->value, atom, external, 0);
-    assert(err >= 0);
-
-    JS_FreeAtom(env->context, atom);
-
-    JS_FreeValue(env->context, reference->value);
-  }
+  reference->value = JS_UNDEFINED;
 }
 
 static inline void
 js__clear_weak_reference(js_env_t *env, js_ref_t *reference) {
-  if (reference->finalized) return;
+  if (JS_IsUndefined(reference->weakref)) return;
 
-  if (JS_IsObject(reference->value)) {
-    int err;
+  reference->value = js__deref_weak_reference(env, reference);
 
-    JS_DupValue(env->context, reference->value);
+  JS_FreeValue(env->context, reference->weakref);
 
-    JSAtom atom = JS_ValueToAtom(env->context, reference->symbol);
-
-    JSValue external = JS_GetProperty(env->context, reference->value, atom);
-
-    js_finalizer_t *finalizer = (js_finalizer_t *) JS_GetOpaque(external, js__external_class_id);
-
-    JS_FreeValue(env->context, external);
-
-    finalizer->finalize_cb = NULL;
-
-    err = JS_DeleteProperty(env->context, reference->value, atom, 0);
-    assert(err >= 0);
-
-    JS_FreeAtom(env->context, atom);
-
-    JS_FreeValue(env->context, reference->symbol);
-
-    reference->symbol = JS_NULL;
-  }
+  reference->weakref = JS_UNDEFINED;
 }
 
 int
@@ -2097,8 +2107,8 @@ js_create_reference(js_env_t *env, js_value_t *value, uint32_t count, js_ref_t *
   js_ref_t *reference = malloc(sizeof(js_ref_t));
 
   reference->value = JS_DupValue(env->context, value->value);
+  reference->weakref = JS_UNDEFINED;
   reference->count = count;
-  reference->symbol = JS_NULL;
   reference->finalized = false;
 
   if (reference->count == 0) js__set_weak_reference(env, reference);
@@ -2112,8 +2122,7 @@ int
 js_delete_reference(js_env_t *env, js_ref_t *reference) {
   // Allow continuing even with a pending exception
 
-  if (reference->count == 0) js__clear_weak_reference(env, reference);
-
+  JS_FreeValue(env->context, reference->weakref);
   JS_FreeValue(env->context, reference->value);
 
   free(reference);
@@ -2153,11 +2162,17 @@ int
 js_get_reference_value(js_env_t *env, js_ref_t *reference, js_value_t **result) {
   // Allow continuing even with a pending exception
 
+  JSValue value;
+
+  if (reference->finalized) value = JS_UNDEFINED;
+  else if (JS_IsUndefined(reference->weakref)) value = JS_DupValue(env->context, reference->value);
+  else value = js__deref_weak_reference(env, reference);
+
   if (reference->finalized) *result = NULL;
   else {
     js_value_t *wrapper = js__create_handle(env, env->scope);
 
-    wrapper->value = JS_DupValue(env->context, reference->value);
+    wrapper->value = value;
 
     *result = wrapper;
   }
@@ -2643,7 +2658,7 @@ js__on_delegate_finalize(JSRuntime *runtime, JSValue value) {
 
   js_delegate_t *delegate = (js_delegate_t *) JS_GetOpaque(value, js__delegate_class_id);
 
-  js__run_finalizer(env, &delegate->finalizer);
+  js__defer_finalizer(env, &delegate->finalizer);
 
   free(delegate);
 }
@@ -2681,7 +2696,7 @@ js__on_finalizer_finalize(JSRuntime *runtime, JSValue value) {
   js_finalizer_list_t *prev;
 
   while (next) {
-    js__run_finalizer(env, &next->finalizer);
+    js__defer_finalizer(env, &next->finalizer);
 
     prev = next;
     next = next->next;
@@ -3583,7 +3598,7 @@ js__on_external_finalize(JSRuntime *runtime, JSValue value) {
   // an opaque of its own.
   if (finalizer == NULL) return;
 
-  js__run_finalizer(env, finalizer);
+  js__defer_finalizer(env, finalizer);
 
   free(finalizer);
 }
@@ -3886,11 +3901,13 @@ err:
 }
 
 static void
-js__release_backing_store(js_env_t *env, js_arraybuffer_backing_store_t *backing_store) {
+js__release_backing_store(js_env_t *env, js_arraybuffer_backing_store_t *backing_store, bool deferred) {
   if (--backing_store->references > 0) return;
 
   if (backing_store->external) {
-    if (backing_store->finalize_cb) {
+    if (deferred) {
+      js__defer_finalize(env, backing_store->data, backing_store->finalize_cb, backing_store->finalize_hint);
+    } else if (backing_store->finalize_cb) {
       backing_store->finalize_cb(env, backing_store->data, backing_store->finalize_hint);
     }
   } else if (backing_store->data) {
@@ -3905,7 +3922,7 @@ js__on_backed_arraybuffer_finalize(JSRuntime *runtime, void *opaque, void *ptr) 
   // Detaching the buffer already released it.
   if (ptr == NULL) return;
 
-  js__release_backing_store((js_env_t *) JS_GetRuntimeOpaque(runtime), (js_arraybuffer_backing_store_t *) opaque);
+  js__release_backing_store((js_env_t *) JS_GetRuntimeOpaque(runtime), (js_arraybuffer_backing_store_t *) opaque, true);
 }
 
 int
@@ -4010,7 +4027,19 @@ int
 js_detach_arraybuffer(js_env_t *env, js_value_t *arraybuffer) {
   // Allow continuing even with a pending exception
 
+  void *opaque;
+
+  JSFreeArrayBufferDataFunc *free_func = JS_GetArrayBufferFreeFunc(env->context, arraybuffer->value, &opaque);
+
+  // Detaching finalizes the backing store right away rather than deferring it
+  // as a collection would, so it is held across the detach and released here.
+  js_arraybuffer_backing_store_t *backing_store = free_func == js__on_backed_arraybuffer_finalize ? opaque : NULL;
+
+  if (backing_store) backing_store->references++;
+
   JS_DetachArrayBuffer(env->context, arraybuffer->value);
+
+  if (backing_store) js__release_backing_store(env, backing_store, false);
 
   return 0;
 }
@@ -4158,7 +4187,7 @@ int
 js_release_arraybuffer_backing_store(js_env_t *env, js_arraybuffer_backing_store_t *backing_store) {
   // Allow continuing even with a pending exception
 
-  js__release_backing_store(env, backing_store);
+  js__release_backing_store(env, backing_store, false);
 
   return 0;
 }
@@ -7102,6 +7131,8 @@ js_request_garbage_collection(js_env_t *env) {
 
   if (env->platform->options.expose_garbage_collection) {
     JS_RunGC(env->runtime);
+
+    js__run_pending_finalizers(env);
   }
 
   return 0;
