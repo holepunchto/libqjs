@@ -1,8 +1,58 @@
 diff --git a/quickjs.c b/quickjs.c
-index 568d2b2..4da5c6d 100644
+index b541928..12146ec 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -37794,10 +37794,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
+@@ -934,6 +934,10 @@ struct JSModuleDef {
+     JSModuleInitFunc *init_func; /* only used for C modules */
+     BOOL has_tla : 8; /* true if func_obj contains await */
+     BOOL resolved : 8;
++    /* TRUE if the module was compiled with its resolution deferred, or read
++       with JS_ReadObject(), in which case the embedder owns it until it is
++       resolved */
++    BOOL deferred : 8;
+     BOOL func_created : 8;
+     JSModuleStatus status : 8;
+     /* temp use during js_module_link() & js_module_evaluate() */
+@@ -2766,7 +2770,8 @@ static void js_free_modules(JSContext *ctx, JSFreeModuleEnum flag)
+     list_for_each_safe(el, el1, &ctx->loaded_modules) {
+         JSModuleDef *m = list_entry(el, JSModuleDef, link);
+         if (flag == JS_FREE_MODULE_ALL ||
+-            (flag == JS_FREE_MODULE_NOT_RESOLVED && !m->resolved)) {
++            (flag == JS_FREE_MODULE_NOT_RESOLVED && !m->resolved &&
++             !m->deferred)) {
+             /* warning: the module may be referenced elsewhere. It
+                could be simpler to use an array instead of a list for
+                'ctx->loaded_modules' */
+@@ -31603,14 +31608,18 @@ static int js_resolve_module(JSContext *ctx, JSModuleDef *m)
+                                                   rme->module_name,
+                                                   rme->attributes);
+         if (!m1)
+-            return -1;
++            goto fail;
+         rme->module = m1;
+         /* already done in js_host_resolve_imported_module() except if
+            the module was loaded with JS_EvalBinary() */
+         if (js_resolve_module(ctx, m1) < 0)
+-            return -1;
++            goto fail;
+     }
+     return 0;
++ fail:
++    /* a deferred module outlives the failure and may be resolved again */
++    m->resolved = FALSE;
++    return -1;
+ }
+ 
+ /* Create the <eval> function associated with the module */
+@@ -38356,6 +38365,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
+             m = js_new_module_def(ctx, module_name);
+             if (!m)
+                 return JS_EXCEPTION;
++            m->deferred = (flags & JS_EVAL_FLAG_DEFER_RESOLUTION) != 0;
+             js_mode |= JS_MODE_STRICT;
+         }
+     }
+@@ -38409,10 +38419,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
      fun_obj = js_create_function(ctx, fd);
      if (JS_IsException(fun_obj))
          goto fail1;
@@ -17,8 +67,16 @@ index 568d2b2..4da5c6d 100644
              goto fail1;
          fun_obj = JS_NewModuleValue(ctx, m);
      }
+@@ -40088,6 +40100,7 @@ static JSValue JS_ReadModule(BCReaderState *s)
+     m = js_new_module_def(ctx, module_name);
+     if (!m)
+         goto fail;
++    m->deferred = TRUE;
+     obj = JS_NewModuleValue(ctx, m);
+     if (bc_get_leb128_int(s, &m->req_module_entries_count))
+         goto fail;
 diff --git a/quickjs.h b/quickjs.h
-index 2130b52..e118a34 100644
+index 6147b75..20fc459 100644
 --- a/quickjs.h
 +++ b/quickjs.h
 @@ -340,6 +340,11 @@ static inline JSValue __JS_NewShortBigInt(JSContext *ctx, int64_t d)

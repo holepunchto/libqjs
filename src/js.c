@@ -34,7 +34,6 @@ typedef struct js_finalizer_s js_finalizer_t;
 typedef struct js_finalizer_list_s js_finalizer_list_t;
 typedef struct js_delegate_s js_delegate_t;
 typedef struct js_module_resolver_s js_module_resolver_t;
-typedef struct js_module_evaluator_s js_module_evaluator_t;
 typedef struct js_arraybuffer_header_s js_arraybuffer_header_t;
 typedef struct js_promise_rejection_s js_promise_rejection_t;
 typedef struct js_threadsafe_queue_s js_threadsafe_queue_t;
@@ -99,7 +98,7 @@ struct js_env_s {
   int64_t external_memory;
 
   js_module_resolver_t *resolvers;
-  js_module_evaluator_t *evaluators;
+  intrusive_list_t synthetic_modules;
 
   intrusive_list_t deferreds;
   intrusive_list_t finalizers;
@@ -161,6 +160,9 @@ struct js_module_s {
   js_module_state_t state;
   bool synthetic;
   bool aborted;
+  js_module_evaluate_cb evaluate;
+  void *evaluate_data;
+  intrusive_list_node_t list;
 };
 
 struct js_script_s {
@@ -174,13 +176,6 @@ struct js_module_resolver_s {
   js_module_resolve_cb cb;
   void *data;
   js_module_resolver_t *next;
-};
-
-struct js_module_evaluator_s {
-  js_module_t *module;
-  js_module_evaluate_cb cb;
-  void *data;
-  js_module_evaluator_t *next;
 };
 
 struct js_context_s {
@@ -814,19 +809,7 @@ static void
 js__on_handle_close(uv_handle_t *handle) {
   js_env_t *env = (js_env_t *) handle->data;
 
-  if (--env->active_handles == 0) {
-    js_module_evaluator_t *evaluator = env->evaluators;
-
-    while (evaluator) {
-      js_module_evaluator_t *next = evaluator->next;
-
-      free(evaluator);
-
-      evaluator = next;
-    }
-
-    free(env);
-  }
+  if (--env->active_handles == 0) free(env);
 }
 
 static inline void
@@ -981,13 +964,13 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   env->external_memory = 0;
 
   env->resolvers = NULL;
-  env->evaluators = NULL;
 
   env->destroying = false;
 
   env->promise_rejections = NULL;
 
   intrusive_list_init(&env->deferreds);
+  intrusive_list_init(&env->synthetic_modules);
   intrusive_list_init(&env->finalizers);
   intrusive_list_init(&env->teardown_queue.tasks);
 
@@ -1666,17 +1649,30 @@ js__on_evaluate_module(JSContext *context, JSModuleDef *definition) {
 
   js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
 
-  js_module_evaluator_t *evaluator = env->evaluators;
+  js_module_t *module = NULL;
 
-  while (evaluator && evaluator->module->definition != definition) {
-    evaluator = evaluator->next;
+  intrusive_list_for_each(next, &env->synthetic_modules) {
+    js_module_t *candidate = intrusive_entry(next, js_module_t, list);
+
+    if (candidate->definition == definition) {
+      module = candidate;
+      break;
+    }
+  }
+
+  // The engine keeps the definition of a module after it has been deleted.
+  if (module == NULL) {
+    err = js_throw_error(env, NULL, "Cannot evaluate a deleted module");
+    assert(err == 0);
+
+    return -1;
   }
 
   js_handle_scope_t *scope;
   err = js_open_handle_scope(env, &scope);
   assert(err == 0);
 
-  evaluator->cb(env, evaluator->module, evaluator->data);
+  module->evaluate(env, module, module->evaluate_data);
 
   err = js_close_handle_scope(env, scope);
   assert(err == 0);
@@ -1686,7 +1682,7 @@ js__on_evaluate_module(JSContext *context, JSModuleDef *definition) {
   // An exception left pending by the callback aborts the evaluation, which the
   // module remembers so that running it can fail rather than report a rejection
   // for something that never ran.
-  evaluator->module->aborted = true;
+  module->aborted = true;
 
   return -1;
 }
@@ -1728,14 +1724,10 @@ js_create_synthetic_module(js_env_t *env, const char *name, size_t len, js_value
     JS_FreeCString(env->context, str);
   }
 
-  js_module_evaluator_t *evaluator = malloc(sizeof(js_module_evaluator_t));
+  module->evaluate = cb;
+  module->evaluate_data = data;
 
-  evaluator->module = module;
-  evaluator->cb = cb;
-  evaluator->data = data;
-  evaluator->next = env->evaluators;
-
-  env->evaluators = evaluator;
+  intrusive_list_prepend(&env->synthetic_modules, &module->list);
 
   *result = module;
 
@@ -1745,6 +1737,8 @@ js_create_synthetic_module(js_env_t *env, const char *name, size_t len, js_value
 int
 js_delete_module(js_env_t *env, js_module_t *module) {
   // Allow continuing even with a pending exception
+
+  if (module->synthetic) intrusive_list_remove(&env->synthetic_modules, &module->list);
 
   JS_FreeValue(env->context, module->bytecode);
   JS_FreeValue(env->context, module->id);
@@ -3259,88 +3253,67 @@ js_create_function(js_env_t *env, const char *name, size_t len, js_function_cb c
   return 0;
 }
 
-// Synthesize the wrapper source `const name = (args) => { source }\n name` that
-// binds the argument list and yields the function as its completion value. The
-// returned buffer is owned by the caller (`free()`), with its length in
-// `*result_len`.
+// Synthesize the wrapper source `(function name(args) {\n source\n})` that binds
+// the argument list and yields the function as its completion value. The name
+// is bound only within the function itself, so functions of the same name do
+// not collide. The returned buffer is owned by the caller (`free()`), with its
+// length in `*result_len`.
 
 static char *
 js__function_source(js_env_t *env, const char *name, size_t name_len, js_value_t *const args[], size_t args_len, js_value_t *source, size_t *result_len) {
-  const char *str;
+  if (name && name_len == (size_t) -1) name_len = strlen(name);
 
-  size_t buf_len = 0;
+  if (name == NULL) name_len = 0;
 
-  if (name) {
-    buf_len += strlen("const ");
+  size_t source_len;
+  const char *source_str = JS_ToCStringLen(env->context, &source_len, source->value);
 
-    if (name_len == (size_t) -1) buf_len += strlen(name);
-    else buf_len += name_len;
+  size_t *arg_lens = malloc(args_len * sizeof(size_t));
+  const char **arg_strs = malloc(args_len * sizeof(char *));
 
-    buf_len += strlen(" = ");
-  }
+  size_t buf_len = strlen("(function ") + name_len + strlen("(") + strlen(") {\n") + source_len + strlen("\n})");
 
-  buf_len += strlen("(");
+  for (size_t i = 0; i < args_len; i++) {
+    arg_strs[i] = JS_ToCStringLen(env->context, &arg_lens[i], args[i]->value);
 
-  for (int i = 0; i < args_len; i++) {
     if (i != 0) buf_len += strlen(", ");
 
-    str = JS_ToCString(env->context, args[i]->value);
-    buf_len += strlen(str);
-    JS_FreeCString(env->context, str);
-  }
-
-  buf_len += strlen(") => {\n");
-
-  str = JS_ToCString(env->context, source->value);
-  buf_len += strlen(str);
-  JS_FreeCString(env->context, str);
-
-  buf_len += strlen("}\n");
-
-  if (name) {
-    if (name_len == (size_t) -1) buf_len += strlen(name);
-    else buf_len += name_len;
-
-    buf_len += strlen("\n");
+    buf_len += arg_lens[i];
   }
 
   char *buf = malloc(buf_len + 1 /* NULL */);
 
-  buf[0] = '\0';
+  size_t offset = 0;
 
-  if (name) {
-    strcat(buf, "const ");
+#define V(str, len) \
+  memcpy(&buf[offset], str, len); \
+  offset += len;
 
-    if (name_len == (size_t) -1) strcat(buf, name);
-    else strncat(buf, name, name_len);
+  V("(function ", strlen("(function "));
+  V(name, name_len);
+  V("(", 1);
 
-    strcat(buf, " = ");
+  for (size_t i = 0; i < args_len; i++) {
+    if (i != 0) {
+      V(", ", 2);
+    }
+
+    V(arg_strs[i], arg_lens[i]);
+
+    JS_FreeCString(env->context, arg_strs[i]);
   }
 
-  strcat(buf, "(");
+  V(") {\n", strlen(") {\n"));
+  V(source_str, source_len);
+  V("\n})", strlen("\n})"));
+#undef V
 
-  for (int i = 0; i < args_len; i++) {
-    if (i != 0) strcat(buf, ", ");
+  buf[offset] = '\0';
 
-    str = JS_ToCString(env->context, args[i]->value);
-    strcat(buf, str);
-    JS_FreeCString(env->context, str);
-  }
+  JS_FreeCString(env->context, source_str);
 
-  strcat(buf, ") => {\n");
-
-  str = JS_ToCString(env->context, source->value);
-  strcat(buf, str);
-  JS_FreeCString(env->context, str);
-
-  strcat(buf, "}\n");
-
-  if (name) {
-    if (name_len == (size_t) -1) strcat(buf, name);
-    else strncat(buf, name, name_len);
-
-    strcat(buf, "\n");
-  }
+  free(arg_lens);
+  free(arg_strs);
 
   *result_len = buf_len;
 
@@ -4017,6 +3990,10 @@ js_create_external_arraybuffer(js_env_t *env, void *data, size_t len, js_finaliz
 
     arraybuffer = JS_NewArrayBuffer(env->context, (uint8_t *) data, len, js__on_backed_arraybuffer_finalize, backing_store, false);
   } else {
+    // There is nothing for the ArrayBuffer to keep alive, so finalize
+    // immediately.
+    if (finalize_cb) finalize_cb(env, data, finalize_hint);
+
     arraybuffer = JS_NewArrayBuffer(env->context, NULL, 0, NULL, NULL, false);
   }
 
@@ -4950,6 +4927,11 @@ js_get_global(js_env_t *env, js_value_t **result) {
   *result = wrapper;
 
   return 0;
+}
+
+int
+js_get_object_global(js_env_t *env, js_value_t *object, js_value_t **result) {
+  return js_get_null(env, result);
 }
 
 int

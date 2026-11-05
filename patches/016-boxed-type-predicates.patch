@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 4da5c6d..286c0e3 100644
+index 12146ec..2df23a7 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -4029,6 +4029,31 @@ JS_BOOL JS_IsModuleNamespace(JSValueConst v)
+@@ -4057,6 +4057,31 @@ JS_BOOL JS_IsModuleNamespace(JSValueConst v)
      return JS_GetClassID(v) == JS_CLASS_MODULE_NS;
  }
  
@@ -35,7 +35,7 @@ index 4da5c6d..286c0e3 100644
  {
      JSClassID class_id = JS_GetClassID(obj);
 diff --git a/quickjs.h b/quickjs.h
-index e118a34..10ea355 100644
+index 20fc459..761e299 100644
 --- a/quickjs.h
 +++ b/quickjs.h
 @@ -841,6 +841,11 @@ JS_BOOL JS_IsArguments(JSValueConst val);
