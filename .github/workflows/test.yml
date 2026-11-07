@@ -31,23 +31,23 @@ jobs:
           - os: ubuntu-22.04
             platform: android
             arch: arm
-          - os: macos-14
+          - os: macos-15
             platform: darwin
             arch: x64
             flags: --sanitize address
-          - os: macos-14
+          - os: macos-15
             platform: darwin
             arch: arm64
             flags: --sanitize address
-          - os: macos-14
+          - os: macos-15
             platform: ios
             arch: arm64
-          - os: macos-14
+          - os: macos-15
             platform: ios
             arch: arm64
             tags: -simulator
             flags: --simulator
-          - os: macos-14
+          - os: macos-15
             platform: ios
             arch: x64
             tags: -simulator
