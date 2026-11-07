@@ -4761,7 +4761,7 @@ int
 js_is_int8array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_INT8;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_INT8;
 
   return 0;
 }
@@ -4770,7 +4770,7 @@ int
 js_is_uint8array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_UINT8;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_UINT8;
 
   return 0;
 }
@@ -4779,7 +4779,7 @@ int
 js_is_uint8clampedarray(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_UINT8C;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_UINT8C;
 
   return 0;
 }
@@ -4788,7 +4788,7 @@ int
 js_is_int16array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_INT16;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_INT16;
 
   return 0;
 }
@@ -4797,7 +4797,7 @@ int
 js_is_uint16array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_UINT16;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_UINT16;
 
   return 0;
 }
@@ -4806,7 +4806,7 @@ int
 js_is_int32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_INT32;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_INT32;
 
   return 0;
 }
@@ -4815,7 +4815,7 @@ int
 js_is_uint32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_UINT32;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_UINT32;
 
   return 0;
 }
@@ -4824,7 +4824,7 @@ int
 js_is_float16array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_FLOAT16;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_FLOAT16;
 
   return 0;
 }
@@ -4833,7 +4833,7 @@ int
 js_is_float32array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_FLOAT32;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_FLOAT32;
 
   return 0;
 }
@@ -4842,7 +4842,7 @@ int
 js_is_float64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_FLOAT64;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_FLOAT64;
 
   return 0;
 }
@@ -4851,7 +4851,7 @@ int
 js_is_bigint64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_BIG_INT64;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_BIG_INT64;
 
   return 0;
 }
@@ -4860,7 +4860,7 @@ int
 js_is_biguint64array(js_env_t *env, js_value_t *value, bool *result) {
   // Allow continuing even with a pending exception
 
-  *result = JS_GetTypedArrayType(env->context, value->value) == JS_TYPED_ARRAY_BIG_UINT64;
+  *result = JS_GetTypedArrayType(value->value) == JS_TYPED_ARRAY_BIG_UINT64;
 
   return 0;
 }
@@ -6110,7 +6110,7 @@ js_get_typedarray_info(js_env_t *env, js_value_t *typedarray, js_typedarray_type
   JSValue arraybuffer = JS_GetTypedArrayBuffer(env->context, typedarray->value, &offset, &byte_len, &bytes_per_element);
 
   if (ptype) {
-    switch (JS_GetTypedArrayType(env->context, typedarray->value)) {
+    switch (JS_GetTypedArrayType(typedarray->value)) {
 #define V(enum, type) \
   case enum: \
     *ptype = type; \

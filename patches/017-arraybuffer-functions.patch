@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index 2df23a7..9647bfc 100644
+index dd86b0c..418649d 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -397,6 +397,8 @@ struct JSRuntime {
@@ -11,7 +11,7 @@ index 2df23a7..9647bfc 100644
      /* see JS_SetStripInfo() */
      uint8_t strip_flags;
      
-@@ -2320,6 +2322,12 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
+@@ -2327,6 +2329,12 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
      rt->sab_funcs = *sf;
  }
  
@@ -24,7 +24,7 @@ index 2df23a7..9647bfc 100644
  void JS_SetStripInfo(JSRuntime *rt, int flags)
  {
      rt->strip_flags = flags;
-@@ -60592,6 +60600,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -60909,6 +60917,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
              if (!abuf->data)
                  goto fail;
              memset(abuf->data, 0, sab_alloc_len);
@@ -39,7 +39,7 @@ index 2df23a7..9647bfc 100644
          } else {
              /* the allocation must be done after the object creation */
              abuf->data = js_mallocz(ctx, max_int(len, 1));
-@@ -60622,7 +60638,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -60940,7 +60956,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
  
  static void js_array_buffer_free(JSRuntime *rt, void *opaque, void *ptr)
  {
@@ -64,8 +64,8 @@ index 2df23a7..9647bfc 100644
  }
  
  static JSValue js_array_buffer_constructor2(JSContext *ctx,
-@@ -60883,6 +60915,19 @@ void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj)
-     js_array_buffer_update_typed_arrays(abuf);
+@@ -61242,6 +61274,19 @@ int JS_SetImmutableArrayBuffer(JSValueConst obj, BOOL immutable)
+     return 0;
  }
  
 +JSFreeArrayBufferDataFunc *JS_GetArrayBufferFreeFunc(JSContext *ctx, JSValueConst obj,
@@ -84,7 +84,7 @@ index 2df23a7..9647bfc 100644
  /* get an ArrayBuffer or SharedArrayBuffer */
  static JSArrayBuffer *js_get_array_buffer(JSContext *ctx, JSValueConst obj)
  {
-@@ -60991,7 +61036,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -61358,7 +61403,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  res = js_array_buffer_constructor2(ctx, JS_UNDEFINED, 0, pmax_len, JS_CLASS_ARRAY_BUFFER);
                  if (JS_IsException(res))
                      return res;
@@ -93,7 +93,7 @@ index 2df23a7..9647bfc 100644
                  if (!new_bs) {
                      JS_FreeValue(ctx, res);
                      return JS_EXCEPTION;
-@@ -60999,7 +61044,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -61366,7 +61411,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  if (new_len > old_len)
                      memset(new_bs + old_len, 0, new_len - old_len);
                  new_abuf = JS_GetOpaque2(ctx, res, JS_CLASS_ARRAY_BUFFER);
@@ -102,7 +102,7 @@ index 2df23a7..9647bfc 100644
                  new_abuf->data = new_bs;
                  new_abuf->byte_length = new_len;
              }
-@@ -61059,7 +61104,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
+@@ -61434,7 +61479,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
          // 2 bytes big in A, and 1 byte big in B
          abuf->byte_length = len;
      } else {
@@ -112,13 +112,13 @@ index 2df23a7..9647bfc 100644
              return JS_EXCEPTION;
          if (len > abuf->byte_length)
 diff --git a/quickjs.h b/quickjs.h
-index 761e299..99cf148 100644
+index 27ebee6..2bfb13b 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -953,6 +953,11 @@ JSValue JS_NewArrayBuffer(JSContext *ctx, uint8_t *buf, size_t len,
- JSValue JS_NewArrayBufferCopy(JSContext *ctx, const uint8_t *buf, size_t len);
- void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj);
- uint8_t *JS_GetArrayBuffer(JSContext *ctx, size_t *psize, JSValueConst obj);
+@@ -967,6 +967,11 @@ JS_BOOL JS_IsArrayBuffer(JSValueConst obj);
+ int JS_IsImmutableArrayBuffer(JSValueConst obj);
+ // returns 0 if obj is an ArrayBuffer, -1 otherwise
+ int JS_SetImmutableArrayBuffer(JSValueConst obj, JS_BOOL immutable);
 +/* return the function that frees the data of an ArrayBuffer and set
 +   '*popaque' to its opaque value, or return NULL if 'obj' is not an
 +   ArrayBuffer or is detached */
@@ -127,7 +127,7 @@ index 761e299..99cf148 100644
  
  typedef enum JSTypedArrayEnum {
      JS_TYPED_ARRAY_UINT8C = 0,
-@@ -988,6 +993,18 @@ typedef struct {
+@@ -1008,6 +1013,18 @@ typedef struct {
  } JSSharedArrayBufferFunctions;
  void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
                                        const JSSharedArrayBufferFunctions *sf);

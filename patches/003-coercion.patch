@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index a012635..95250ac 100644
+index 12ee22c..6741eb2 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -1352,7 +1352,7 @@ static BOOL js_string_eq(JSContext *ctx,
+@@ -1376,7 +1376,7 @@ static BOOL js_string_eq(JSContext *ctx,
                           const JSString *p1, const JSString *p2);
  static int js_string_compare(JSContext *ctx,
                               const JSString *p1, const JSString *p2);
@@ -11,7 +11,7 @@ index a012635..95250ac 100644
  static int JS_SetPropertyValue(JSContext *ctx, JSValueConst this_obj,
                                 JSValue prop, JSValue val, int flags);
  static int JS_NumberIsInteger(JSContext *ctx, JSValueConst val);
-@@ -13283,7 +13283,7 @@ int JS_ToFloat64(JSContext *ctx, double *pres, JSValueConst val)
+@@ -13439,7 +13439,7 @@ int JS_ToFloat64(JSContext *ctx, double *pres, JSValueConst val)
      return JS_ToFloat64Free(ctx, pres, JS_DupValue(ctx, val));
  }
  
@@ -21,10 +21,10 @@ index a012635..95250ac 100644
      return JS_ToNumberFree(ctx, JS_DupValue(ctx, val));
  }
 diff --git a/quickjs.h b/quickjs.h
-index f4ceccf..df45ef6 100644
+index 719ff4d..abe002c 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -768,6 +768,12 @@ JSValue JS_NewBigInt128(JSContext *ctx, uint64_t low, uint64_t high);
+@@ -778,6 +778,12 @@ JSValue JS_NewBigInt128(JSContext *ctx, uint64_t low, uint64_t high);
  int JS_ToBigInt128(JSContext *ctx, uint64_t *plow, uint64_t *phigh, JSValueConst val);
  int JS_ToBigInt128Sat(JSContext *ctx, uint64_t *plow, uint64_t *phigh, JSValueConst val);
  

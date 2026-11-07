@@ -1,16 +1,11 @@
 diff --git a/quickjs.c b/quickjs.c
-index e20c3ee..a012635 100644
+index d2710fb..12ee22c 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -3913,6 +3913,108 @@ JSClassID JS_GetClassID(JSValue v)
+@@ -3939,6 +3939,103 @@ JSClassID JS_GetClassID(JSValueConst v)
      return p->class_id;
  }
  
-+JS_BOOL JS_IsArrayBuffer(JSValueConst v)
-+{
-+    return JS_GetClassID(v) == JS_CLASS_ARRAY_BUFFER;
-+}
-+
 +JS_BOOL JS_IsSharedArrayBuffer(JSValueConst v)
 +{
 +    return JS_GetClassID(v) == JS_CLASS_SHARED_ARRAY_BUFFER;
@@ -112,14 +107,13 @@ index e20c3ee..a012635 100644
  {
      return (class_id < rt->class_count &&
 diff --git a/quickjs.h b/quickjs.h
-index e525982..f4ceccf 100644
+index ddfbbed..719ff4d 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -804,6 +804,26 @@ JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val)
+@@ -814,6 +814,25 @@ JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val)
  
  JSValue JS_NewArray(JSContext *ctx);
  int JS_IsArray(JSContext *ctx, JSValueConst val);
-+JS_BOOL JS_IsArrayBuffer(JSValueConst val);
 +JS_BOOL JS_IsSharedArrayBuffer(JSValueConst val);
 +JS_BOOL JS_IsTypedArray(JSValueConst val);
 +JS_BOOL JS_IsDataView(JSValueConst val);

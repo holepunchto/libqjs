@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 12146ec..2df23a7 100644
+index f0719ab..dd86b0c 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -4057,6 +4057,31 @@ JS_BOOL JS_IsModuleNamespace(JSValueConst v)
+@@ -4059,6 +4059,31 @@ JS_BOOL JS_IsModuleNamespace(JSValueConst v)
      return JS_GetClassID(v) == JS_CLASS_MODULE_NS;
  }
  
@@ -31,14 +31,14 @@ index 12146ec..2df23a7 100644
 +    return JS_GetClassID(v) == JS_CLASS_BIG_INT;
 +}
 +
- int JS_GetTypedArrayType(JSContext *ctx, JSValueConst obj)
+ BOOL JS_IsRegisteredClass(JSRuntime *rt, JSClassID class_id)
  {
-     JSClassID class_id = JS_GetClassID(obj);
+     return (class_id < rt->class_count &&
 diff --git a/quickjs.h b/quickjs.h
-index 20fc459..761e299 100644
+index e83f7d0..27ebee6 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -841,6 +841,11 @@ JS_BOOL JS_IsArguments(JSValueConst val);
+@@ -850,6 +850,11 @@ JS_BOOL JS_IsArguments(JSValueConst val);
  JS_BOOL JS_IsMapIterator(JSValueConst val);
  JS_BOOL JS_IsSetIterator(JSValueConst val);
  JS_BOOL JS_IsModuleNamespace(JSValueConst val);

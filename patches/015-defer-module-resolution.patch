@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index b541928..12146ec 100644
+index fc4b22d..f0719ab 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -934,6 +934,10 @@ struct JSModuleDef {
+@@ -937,6 +937,10 @@ struct JSModuleDef {
      JSModuleInitFunc *init_func; /* only used for C modules */
      BOOL has_tla : 8; /* true if func_obj contains await */
      BOOL resolved : 8;
@@ -13,7 +13,7 @@ index b541928..12146ec 100644
      BOOL func_created : 8;
      JSModuleStatus status : 8;
      /* temp use during js_module_link() & js_module_evaluate() */
-@@ -2766,7 +2770,8 @@ static void js_free_modules(JSContext *ctx, JSFreeModuleEnum flag)
+@@ -2773,7 +2777,8 @@ static void js_free_modules(JSContext *ctx, JSFreeModuleEnum flag)
      list_for_each_safe(el, el1, &ctx->loaded_modules) {
          JSModuleDef *m = list_entry(el, JSModuleDef, link);
          if (flag == JS_FREE_MODULE_ALL ||
@@ -23,7 +23,7 @@ index b541928..12146ec 100644
              /* warning: the module may be referenced elsewhere. It
                 could be simpler to use an array instead of a list for
                 'ctx->loaded_modules' */
-@@ -31603,14 +31608,18 @@ static int js_resolve_module(JSContext *ctx, JSModuleDef *m)
+@@ -31795,14 +31800,18 @@ static int js_resolve_module(JSContext *ctx, JSModuleDef *m)
                                                    rme->module_name,
                                                    rme->attributes);
          if (!m1)
@@ -44,7 +44,7 @@ index b541928..12146ec 100644
  }
  
  /* Create the <eval> function associated with the module */
-@@ -38356,6 +38365,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
+@@ -38603,6 +38612,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
              m = js_new_module_def(ctx, module_name);
              if (!m)
                  return JS_EXCEPTION;
@@ -52,7 +52,7 @@ index b541928..12146ec 100644
              js_mode |= JS_MODE_STRICT;
          }
      }
-@@ -38409,10 +38419,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
+@@ -38656,10 +38666,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
      fun_obj = js_create_function(ctx, fd);
      if (JS_IsException(fun_obj))
          goto fail1;
@@ -67,7 +67,7 @@ index b541928..12146ec 100644
              goto fail1;
          fun_obj = JS_NewModuleValue(ctx, m);
      }
-@@ -40088,6 +40100,7 @@ static JSValue JS_ReadModule(BCReaderState *s)
+@@ -40335,6 +40347,7 @@ static JSValue JS_ReadModule(BCReaderState *s)
      m = js_new_module_def(ctx, module_name);
      if (!m)
          goto fail;
@@ -76,10 +76,10 @@ index b541928..12146ec 100644
      if (bc_get_leb128_int(s, &m->req_module_entries_count))
          goto fail;
 diff --git a/quickjs.h b/quickjs.h
-index 6147b75..20fc459 100644
+index 87948e2..e83f7d0 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -340,6 +340,11 @@ static inline JSValue __JS_NewShortBigInt(JSContext *ctx, int64_t d)
+@@ -350,6 +350,11 @@ static inline JSValue __JS_NewShortBigInt(JSContext *ctx, int64_t d)
     JS_TAG_FUNCTION_BYTECODE or JS_TAG_MODULE tag. It can be executed
     with JS_EvalFunction(). */
  #define JS_EVAL_FLAG_COMPILE_ONLY (1 << 5)

@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 9647bfc..75b8b3e 100644
+index 418649d..652f483 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -65324,41 +65324,63 @@ static void weakref_delete_weakref(JSRuntime *rt, JSWeakRefHeader *wh)
+@@ -65815,41 +65815,63 @@ static void weakref_delete_weakref(JSRuntime *rt, JSWeakRefHeader *wh)
      }
  }
  
@@ -83,10 +83,10 @@ index 9647bfc..75b8b3e 100644
  
  static const JSCFunctionListEntry js_weakref_proto_funcs[] = {
 diff --git a/quickjs.h b/quickjs.h
-index 99cf148..c5b325f 100644
+index 2bfb13b..a87ab18 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -819,6 +819,11 @@ JS_BOOL JS_IsFunction(JSContext* ctx, JSValueConst val);
+@@ -829,6 +829,11 @@ JS_BOOL JS_IsFunction(JSContext* ctx, JSValueConst val);
  JS_BOOL JS_IsConstructor(JSContext* ctx, JSValueConst val);
  JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val);
  
@@ -97,4 +97,4 @@ index 99cf148..c5b325f 100644
 +
  JSValue JS_NewArray(JSContext *ctx, uint32_t len);
  int JS_IsArray(JSContext *ctx, JSValueConst val);
- JS_BOOL JS_IsArrayBuffer(JSValueConst val);
+ JS_BOOL JS_IsSharedArrayBuffer(JSValueConst val);

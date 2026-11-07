@@ -5,7 +5,7 @@ find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 project(js C)
 
 fetch_package(
-  "github:bellard/quickjs#19d6bd8"
+  "github:bellard/quickjs#092277a"
   SOURCE_DIR qjs
   PATCHES
     patches/001-get-version.patch
@@ -17,7 +17,6 @@ fetch_package(
     patches/008-windows-alloca.patch
     patches/009-windows-bigint-limb.patch
     patches/010-windows-closure-type.patch
-    patches/011-typed-array-type.patch
     patches/012-new-error.patch
     patches/013-dataview.patch
     patches/014-new-array.patch

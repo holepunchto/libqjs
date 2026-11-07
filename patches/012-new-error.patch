@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 7443597..9d9a10c 100644
+index e14dc35..1844e8c 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -7852,9 +7852,46 @@ static BOOL is_backtrace_needed(JSContext *ctx, JSValueConst obj)
+@@ -7888,9 +7888,46 @@ static BOOL is_backtrace_needed(JSContext *ctx, JSValueConst obj)
      return TRUE;
  }
  
@@ -52,10 +52,10 @@ index 7443597..9d9a10c 100644
  
  static JSValue JS_ThrowError2(JSContext *ctx, JSErrorEnum error_num,
 diff --git a/quickjs.h b/quickjs.h
-index 255553f..078dcd5 100644
+index 992eb0c..be7d814 100644
 --- a/quickjs.h
 +++ b/quickjs.h
-@@ -690,7 +690,11 @@ void JS_SetUncatchableError(JSContext *ctx, JSValueConst val);
+@@ -700,7 +700,11 @@ void JS_SetUncatchableError(JSContext *ctx, JSValueConst val);
  JSValue JS_GetException(JSContext *ctx);
  JS_BOOL JS_HasException(JSContext *ctx);
  JS_BOOL JS_IsError(JSContext *ctx, JSValueConst val);

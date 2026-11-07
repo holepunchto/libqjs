@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 20b5be2..9d5e922 100644
+index c5c2061..e14dc35 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -639,7 +639,7 @@ typedef enum {
+@@ -642,7 +642,7 @@ typedef enum {
  } JSClosureTypeEnum;
  
  typedef struct JSClosureVar {
