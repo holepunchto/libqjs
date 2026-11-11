@@ -344,8 +344,12 @@ static JSClassDef js__constructor_class = {
 
 static JSClassID js__microtask_class_id;
 
+static void
+js__on_microtask_finalize(JSRuntime *runtime, JSValue value);
+
 static JSClassDef js__microtask_class = {
   .class_name = "Microtask",
+  .finalizer = js__on_microtask_finalize,
 };
 
 static int
@@ -621,6 +625,16 @@ static inline void
 js__run_microtasks(js_env_t *env) {
   int err;
 
+  // An exception thrown by the call before the checkpoint is held aside so
+  // that the jobs run without it, and is pending again once they are done.
+  JSValue exception = JS_GetException(env->context);
+
+  if (JS_IsUncatchableError(exception)) {
+    JS_Throw(env->context, exception);
+
+    return;
+  }
+
   env->depth++;
 
   for (;;) {
@@ -657,10 +671,48 @@ js__run_microtasks(js_env_t *env) {
 
     free(prev);
 
+    // An exception thrown by the handler is left pending, so the remaining
+    // rejections are left for the next checkpoint.
+    if (JS_HasException(env->context)) {
+      if (next) {
+        prev = next;
+
+        while (prev->next) prev = prev->next;
+
+        prev->next = env->promise_rejections;
+
+        env->promise_rejections = next;
+      }
+
+      break;
+    }
+
     js__run_microtasks(env);
   }
 
   env->depth--;
+
+  if (!JS_IsUninitialized(exception)) JS_Throw(env->context, exception);
+}
+
+// Leave JavaScript entered by a call made with libjs, performing a checkpoint
+// if no JavaScript is left on the stack. Returns whether the call must report
+// an exception: one that is not taken as uncaught is left for the caller.
+static inline bool
+js__finish_call(js_env_t *env, bool threw) {
+  if (env->depth == 1) js__run_microtasks(env);
+
+  env->depth--;
+
+  if (env->depth > 0) return threw || JS_HasException(env->context);
+
+  if (JS_HasException(env->context)) js__uncaught_exception(env, JS_GetException(env->context));
+
+  // With no JavaScript left on the stack, finalizers may run as they would
+  // after a collection.
+  js__run_pending_finalizers(env);
+
+  return threw;
 }
 
 static void
@@ -676,7 +728,16 @@ js__on_check(uv_check_t *handle) {
   // would have to be held as work is queued rather than settled from here: the
   // loop runs timers after the check phase, so what their callbacks queue
   // cannot be observed from a check callback.
-  js__run_pending_finalizers((js_env_t *) handle->data);
+  js_env_t *env = (js_env_t *) handle->data;
+
+  js__run_pending_finalizers(env);
+
+  // The cleanup callbacks of finalization registries are queued as jobs by a
+  // collection, which is not followed by a checkpoint, so they run here as the
+  // task they would otherwise be.
+  if (env->depth == 0 && JS_IsJobPending(env->runtime)) js__run_microtasks(env);
+
+  uv_unref((uv_handle_t *) handle);
 }
 
 static inline size_t
@@ -885,6 +946,17 @@ js__run_pending_finalizers(js_env_t *env) {
 
 static void
 js__close_env(js_env_t *env) {
+  while (env->promise_rejections) {
+    js_promise_rejection_t *next = env->promise_rejections;
+
+    env->promise_rejections = next->next;
+
+    JS_FreeValue(env->context, next->promise);
+    JS_FreeValue(env->context, next->reason);
+
+    free(next);
+  }
+
   intrusive_list_for_each(next, &env->deferreds) {
     js_deferred_t *deferred = intrusive_entry(next, js_deferred_t, list);
 
@@ -1248,9 +1320,13 @@ int
 js_create_context(js_env_t *env, js_context_t **result) {
   // Allow continuing even with a pending exception
 
+  JSContext *local = JS_NewContext(env->runtime);
+
+  if (local == NULL) return js__error(env);
+
   js_context_t *context = malloc(sizeof(js_context_t));
 
-  context->context = JS_NewContext(env->runtime);
+  context->context = local;
   context->previous = NULL;
 
   *result = context;
@@ -1325,19 +1401,7 @@ js_run_script(js_env_t *env, const char *file, size_t len, int offset, js_value_
 
   JS_FreeCString(env->context, str);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, JS_IsException(value))) return js__error(env);
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -1485,19 +1549,7 @@ js_run_prepared_script(js_env_t *env, js_script_t *script, js_value_t **result) 
 
   JSValue value = JS_EvalFunction(env->context, JS_DupValue(env->context, script->bytecode));
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, JS_IsException(value))) return js__error(env);
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -1942,20 +1994,10 @@ js_instantiate_module(js_env_t *env, js_module_t *module, js_module_resolve_cb c
 
   int success = JS_ResolveModule(env->context, module->bytecode);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
   env->resolvers = resolver.next;
 
-  if (success < 0) {
+  if (js__finish_call(env, success < 0)) {
     module->state = js_module_uninstantiated;
-
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
 
     return js__error(env);
   }
@@ -3626,11 +3668,15 @@ js_create_external(js_env_t *env, void *data, js_finalize_cb finalize_cb, void *
 
 int
 js_create_date(js_env_t *env, double time, js_value_t **result) {
-  // Allow continuing even with a pending exception
+  if (JS_HasException(env->context)) return js__error(env);
+
+  JSValue date = JS_NewDate(env->context, time);
+
+  if (JS_IsException(date)) return js__error(env);
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
-  wrapper->value = JS_NewDate(env->context, time);
+  wrapper->value = date;
 
   *result = wrapper;
 
@@ -3648,7 +3694,7 @@ js_create_error(js_env_t *env, js_value_t *code, js_value_t *message, js_value_t
   if (str) JS_FreeCString(env->context, str);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_DupValue(env->context, code->value), JS_PROP_C_W_E);
   }
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
@@ -3671,7 +3717,7 @@ js_create_type_error(js_env_t *env, js_value_t *code, js_value_t *message, js_va
   if (str) JS_FreeCString(env->context, str);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_DupValue(env->context, code->value), JS_PROP_C_W_E);
   }
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
@@ -3694,7 +3740,7 @@ js_create_range_error(js_env_t *env, js_value_t *code, js_value_t *message, js_v
   if (str) JS_FreeCString(env->context, str);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_DupValue(env->context, code->value), JS_PROP_C_W_E);
   }
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
@@ -3717,7 +3763,7 @@ js_create_syntax_error(js_env_t *env, js_value_t *code, js_value_t *message, js_
   if (str) JS_FreeCString(env->context, str);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_DupValue(env->context, code->value), JS_PROP_C_W_E);
   }
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
@@ -3740,7 +3786,7 @@ js_create_reference_error(js_env_t *env, js_value_t *code, js_value_t *message, 
   if (str) JS_FreeCString(env->context, str);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_DupValue(env->context, code->value));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_DupValue(env->context, code->value), JS_PROP_C_W_E);
   }
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
@@ -3769,15 +3815,19 @@ js_get_error_location(js_env_t *env, js_value_t *error, js_error_location_t *res
 
 int
 js_create_promise(js_env_t *env, js_deferred_t **deferred, js_value_t **promise) {
-  // Allow continuing even with a pending exception
+  if (JS_HasException(env->context)) return js__error(env);
+
+  JSValue functions[2];
+
+  JSValue value = JS_NewPromiseCapability(env->context, functions);
+
+  if (JS_IsException(value)) return js__error(env);
 
   *deferred = malloc(sizeof(js_deferred_t));
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
-  JSValue functions[2];
-
-  wrapper->value = JS_NewPromiseCapability(env->context, functions);
+  wrapper->value = value;
 
   (*deferred)->resolve = functions[0];
   (*deferred)->reject = functions[1];
@@ -3793,16 +3843,15 @@ js_create_promise(js_env_t *env, js_deferred_t **deferred, js_value_t **promise)
 
 static inline int
 js__conclude_deferred(js_env_t *env, js_deferred_t *deferred, js_value_t *resolution, bool resolved) {
-  // Allow continuing even with a pending exception
-
   JSValue global = JS_GetGlobalObject(env->context);
+
+  // Resolving with a thenable reads its `then` property, which may run
+  // JavaScript.
+  env->depth++;
 
   JSValue result = JS_Call(env->context, resolved ? deferred->resolve : deferred->reject, global, 1, &resolution->value);
 
-  if (env->depth == 0) js__run_microtasks(env);
-
   JS_FreeValue(env->context, global);
-  JS_FreeValue(env->context, result);
   JS_FreeValue(env->context, deferred->resolve);
   JS_FreeValue(env->context, deferred->reject);
 
@@ -3810,16 +3859,26 @@ js__conclude_deferred(js_env_t *env, js_deferred_t *deferred, js_value_t *resolu
 
   free(deferred);
 
+  bool threw = JS_IsException(result);
+
+  JS_FreeValue(env->context, result);
+
+  if (js__finish_call(env, threw)) return js__error(env);
+
   return 0;
 }
 
 int
 js_resolve_deferred(js_env_t *env, js_deferred_t *deferred, js_value_t *resolution) {
+  if (JS_HasException(env->context)) return js__error(env);
+
   return js__conclude_deferred(env, deferred, resolution, true);
 }
 
 int
 js_reject_deferred(js_env_t *env, js_deferred_t *deferred, js_value_t *resolution) {
+  if (JS_HasException(env->context)) return js__error(env);
+
   return js__conclude_deferred(env, deferred, resolution, false);
 }
 
@@ -4272,9 +4331,11 @@ int
 js_coerce_to_number(js_env_t *env, js_value_t *value, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  env->depth++;
+
   JSValue number = JS_ToNumber(env->context, value->value);
 
-  if (JS_IsException(number)) return js__error(env);
+  if (js__finish_call(env, JS_IsException(number))) return js__error(env);
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
@@ -4289,9 +4350,11 @@ int
 js_coerce_to_string(js_env_t *env, js_value_t *value, js_value_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  env->depth++;
+
   JSValue string = JS_ToString(env->context, value->value);
 
-  if (JS_IsException(string)) return js__error(env);
+  if (js__finish_call(env, JS_IsException(string))) return js__error(env);
 
   js_value_t *wrapper = js__create_handle(env, env->scope);
 
@@ -4352,9 +4415,11 @@ int
 js_instanceof(js_env_t *env, js_value_t *object, js_value_t *constructor, bool *result) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  env->depth++;
+
   int success = JS_IsInstanceOf(env->context, object->value, constructor->value);
 
-  if (success < 0) return js__error(env);
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   *result = success;
 
@@ -4735,6 +4800,15 @@ js_is_detached_arraybuffer(js_env_t *env, js_value_t *value, bool *result) {
   size_t len;
 
   *result = JS_GetArrayBuffer(env->context, &len, value->value) == NULL;
+
+  return 0;
+}
+
+int
+js_is_detachable_arraybuffer(js_env_t *env, js_value_t *value, bool *result) {
+  // Allow continuing even with a pending exception
+
+  *result = JS_IsArrayBuffer(value->value);
 
   return 0;
 }
@@ -5214,19 +5288,7 @@ js_get_array_elements(js_env_t *env, js_value_t *array, js_value_t **elements, s
   for (uint32_t i = 0, n = len, j = offset; i < n && j < m; i++, j++) {
     JSValue value = JS_GetPropertyUint32(env->context, array->value, j);
 
-    if (env->depth == 1) js__run_microtasks(env);
-
-    if (JS_IsException(value)) {
-      env->depth--;
-
-      if (env->depth == 0) {
-        JSValue error = JS_GetException(env->context);
-
-        js__uncaught_exception(env, error);
-      }
-
-      return js__error(env);
-    }
+    if (JS_IsException(value)) break;
 
     js_value_t *wrapper = js__create_handle(env, env->scope);
 
@@ -5237,7 +5299,7 @@ js_get_array_elements(js_env_t *env, js_value_t *array, js_value_t **elements, s
     written++;
   }
 
-  env->depth--;
+  if (js__finish_call(env, JS_HasException(env->context))) return js__error(env);
 
   if (result) *result = written;
 
@@ -5253,22 +5315,10 @@ js_set_array_elements(js_env_t *env, js_value_t *array, js_value_t *const elemen
   for (uint32_t i = 0, n = len, j = offset; i < n; i++, j++) {
     int success = JS_SetPropertyUint32(env->context, array->value, j, JS_DupValue(env->context, elements[i]->value));
 
-    if (env->depth == 1) js__run_microtasks(env);
-
-    if (success < 0) {
-      env->depth--;
-
-      if (env->depth == 0) {
-        JSValue error = JS_GetException(env->context);
-
-        js__uncaught_exception(env, error);
-      }
-
-      return js__error(env);
-    }
+    if (success < 0) break;
   }
 
-  env->depth--;
+  if (js__finish_call(env, JS_HasException(env->context))) return js__error(env);
 
   return 0;
 }
@@ -5290,9 +5340,11 @@ int
 js_set_prototype(js_env_t *env, js_value_t *object, js_value_t *prototype) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  env->depth++;
+
   int success = JS_SetPrototype(env->context, object->value, prototype->value);
 
-  if (success < 0) return js__error(env);
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   return 0;
 }
@@ -5321,19 +5373,7 @@ js__set_integrity_level(js_env_t *env, js_value_t *object, const char *method) {
 
   JS_FreeValue(env->context, function);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (JS_IsException(result)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, JS_IsException(result))) return js__error(env);
 
   JS_FreeValue(env->context, result);
 
@@ -5363,19 +5403,7 @@ js_get_property_names(js_env_t *env, js_value_t *object, js_value_t **result) {
 
   err = JS_GetOwnPropertyNames(env->context, &properties, &len, object->value, JS_GPN_ENUM_ONLY | JS_GPN_STRING_MASK);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (err < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, err < 0)) return js__error(env);
 
   JSValue array = JS_NewArray(env->context, 0);
 
@@ -5477,19 +5505,7 @@ js_get_filtered_property_names(js_env_t *env, js_value_t *object, js_key_collect
 
   err = JS_GetOwnPropertyNames(env->context, &properties, &len, object->value, flags);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (err < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, err < 0)) return js__error(env);
 
   JSValue array = JS_NewArray(env->context, 0);
   uint32_t j = 0;
@@ -5578,19 +5594,7 @@ js_get_property(js_env_t *env, js_value_t *object, js_value_t *key, js_value_t *
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, JS_IsException(value))) return js__error(env);
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -5616,19 +5620,7 @@ js_has_property(js_env_t *env, js_value_t *object, js_value_t *key, bool *result
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   if (result) *result = success == 1;
 
@@ -5647,19 +5639,7 @@ js_has_own_property(js_env_t *env, js_value_t *object, js_value_t *key, bool *re
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   if (result) *result = success == 1;
 
@@ -5678,19 +5658,7 @@ js_set_property(js_env_t *env, js_value_t *object, js_value_t *key, js_value_t *
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   return 0;
 }
@@ -5707,19 +5675,7 @@ js_delete_property(js_env_t *env, js_value_t *object, js_value_t *key, bool *res
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   if (result) *result = success == 1;
 
@@ -5734,19 +5690,7 @@ js_get_named_property(js_env_t *env, js_value_t *object, const char *name, js_va
 
   JSValue value = JS_GetPropertyStr(env->context, object->value, name);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, JS_IsException(value))) return js__error(env);
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -5772,19 +5716,7 @@ js_has_named_property(js_env_t *env, js_value_t *object, const char *name, bool 
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   if (result) *result = success == 1;
 
@@ -5799,19 +5731,7 @@ js_set_named_property(js_env_t *env, js_value_t *object, const char *name, js_va
 
   int success = JS_SetPropertyStr(env->context, object->value, name, JS_DupValue(env->context, value->value));
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   return 0;
 }
@@ -5828,19 +5748,7 @@ js_delete_named_property(js_env_t *env, js_value_t *object, const char *name, bo
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   if (result) *result = success == 1;
 
@@ -5855,19 +5763,7 @@ js_get_element(js_env_t *env, js_value_t *object, uint32_t index, js_value_t **r
 
   JSValue value = JS_GetPropertyUint32(env->context, object->value, index);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, JS_IsException(value))) return js__error(env);
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -5893,19 +5789,7 @@ js_has_element(js_env_t *env, js_value_t *object, uint32_t index, bool *result) 
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   if (result) *result = success == 1;
 
@@ -5920,19 +5804,7 @@ js_set_element(js_env_t *env, js_value_t *object, uint32_t index, js_value_t *va
 
   int success = JS_SetPropertyUint32(env->context, object->value, index, JS_DupValue(env->context, value->value));
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   return 0;
 }
@@ -5949,19 +5821,7 @@ js_delete_element(js_env_t *env, js_value_t *object, uint32_t index, bool *resul
 
   JS_FreeAtom(env->context, atom);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (success < 0) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, success < 0)) return js__error(env);
 
   if (result) *result = success == 1;
 
@@ -6210,19 +6070,7 @@ js_call_function(js_env_t *env, js_value_t *recv, js_value_t *function, size_t a
 
   free(args);
 
-  if (env->depth == 1) js__run_microtasks(env);
-
-  env->depth--;
-
-  if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, JS_IsException(value))) return js__error(env);
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -6254,12 +6102,8 @@ js_call_function_with_checkpoint(js_env_t *env, js_value_t *receiver, js_value_t
 
   js__run_microtasks(env);
 
-  env->depth--;
-
-  if (JS_IsException(value)) {
-    JSValue error = JS_GetException(env->context);
-
-    js__uncaught_exception(env, error);
+  if (js__finish_call(env, JS_IsException(value))) {
+    JS_FreeValue(env->context, value);
 
     return js__error(env);
   }
@@ -6283,7 +6127,7 @@ js__on_microtask(JSContext *context, int argc, JSValueConst *argv) {
 
 int
 js_queue_microtask(js_env_t *env, js_value_t *function) {
-  // Allow continuing even with a pending exception
+  if (JS_HasException(env->context)) return js__error(env);
 
   JS_EnqueueJob(env->context, js__on_microtask, 1, &function->value);
 
@@ -6292,20 +6136,38 @@ js_queue_microtask(js_env_t *env, js_value_t *function) {
   return 0;
 }
 
+static void
+js__on_microtask_finalize(JSRuntime *runtime, JSValue value) {
+  free(JS_GetOpaque(value, js__microtask_class_id));
+}
+
 static JSValue
 js__on_microtask_with_callback(JSContext *context, int argc, JSValueConst *argv) {
+  int err;
+
   js_microtask_t *task = (js_microtask_t *) JS_GetOpaque(argv[0], js__microtask_class_id);
 
-  task->cb(task->env, task->data);
+  JS_SetOpaque(argv[0], NULL);
+
+  js_env_t *env = task->env;
+
+  js_handle_scope_t *scope;
+  err = js_open_handle_scope(env, &scope);
+  assert(err == 0);
+
+  task->cb(env, task->data);
+
+  err = js_close_handle_scope(env, scope);
+  assert(err == 0);
 
   free(task);
 
-  return JS_UNDEFINED;
+  return JS_HasException(env->context) ? JS_EXCEPTION : JS_UNDEFINED;
 }
 
 int
 js_queue_microtask_with_callback(js_env_t *env, js_task_cb cb, void *data) {
-  // Allow continuing even with a pending exception
+  if (JS_HasException(env->context)) return js__error(env);
 
   js_microtask_t *task = malloc(sizeof(js_microtask_t));
 
@@ -6342,17 +6204,7 @@ js_new_instance(js_env_t *env, js_value_t *constructor, size_t argc, js_value_t 
 
   free(args);
 
-  env->depth--;
-
-  if (JS_IsException(value)) {
-    if (env->depth == 0) {
-      JSValue error = JS_GetException(env->context);
-
-      js__uncaught_exception(env, error);
-    }
-
-    return js__error(env);
-  }
+  if (js__finish_call(env, JS_IsException(value))) return js__error(env);
 
   if (result == NULL) JS_FreeValue(env->context, value);
   else {
@@ -6707,6 +6559,26 @@ int
 js_add_teardown_callback(js_env_t *env, js_teardown_cb callback, void *data) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
+  if (env->destroying) {
+    err = js_throw_error(env, NULL, "Teardown queue has already drained");
+    assert(err == 0);
+
+    return js__error(env);
+  }
+
+  intrusive_list_for_each(next, &env->teardown_queue.tasks) {
+    js_teardown_task_t *task = intrusive_entry(next, js_teardown_task_t, list);
+
+    if (task->type == js_immediate_teardown && task->immediate.cb == callback && task->data == data) {
+      err = js_throw_error(env, NULL, "Teardown callback has already been registered");
+      assert(err == 0);
+
+      return js__error(env);
+    }
+  }
+
   js_teardown_task_t *task = malloc(sizeof(js_teardown_task_t));
 
   task->type = js_immediate_teardown;
@@ -6722,6 +6594,8 @@ int
 js_remove_teardown_callback(js_env_t *env, js_teardown_cb callback, void *data) {
   if (JS_HasException(env->context)) return js__error(env);
 
+  int err;
+
   if (env->destroying) return 0;
 
   intrusive_list_for_each(next, &env->teardown_queue.tasks) {
@@ -6736,12 +6610,35 @@ js_remove_teardown_callback(js_env_t *env, js_teardown_cb callback, void *data) 
     }
   }
 
-  return 0;
+  err = js_throw_error(env, NULL, "Teardown callback has not been registered");
+  assert(err == 0);
+
+  return js__error(env);
 }
 
 int
 js_add_deferred_teardown_callback(js_env_t *env, js_deferred_teardown_cb callback, void *data, js_deferred_teardown_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
+
+  int err;
+
+  if (env->destroying) {
+    err = js_throw_error(env, NULL, "Teardown queue has already drained");
+    assert(err == 0);
+
+    return js__error(env);
+  }
+
+  intrusive_list_for_each(next, &env->teardown_queue.tasks) {
+    js_teardown_task_t *task = intrusive_entry(next, js_teardown_task_t, list);
+
+    if (task->type == js_deferred_teardown && task->deferred.cb == callback && task->data == data) {
+      err = js_throw_error(env, NULL, "Teardown callback has already been registered");
+      assert(err == 0);
+
+      return js__error(env);
+    }
+  }
 
   js_teardown_task_t *task = malloc(sizeof(js_teardown_task_t));
 
@@ -6826,7 +6723,7 @@ js_throw_error(js_env_t *env, const char *code, const char *message) {
   JSValue error = JS_NewError(env->context, message);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_NewString(env->context, code), JS_PROP_C_W_E);
   }
 
   JS_Throw(env->context, error);
@@ -6875,7 +6772,7 @@ js_throw_type_error(js_env_t *env, const char *code, const char *message) {
   JSValue error = JS_NewTypeError(env->context, message);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_NewString(env->context, code), JS_PROP_C_W_E);
   }
 
   JS_Throw(env->context, error);
@@ -6924,7 +6821,7 @@ js_throw_range_error(js_env_t *env, const char *code, const char *message) {
   JSValue error = JS_NewRangeError(env->context, message);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_NewString(env->context, code), JS_PROP_C_W_E);
   }
 
   JS_Throw(env->context, error);
@@ -6973,7 +6870,7 @@ js_throw_syntax_error(js_env_t *env, const char *code, const char *message) {
   JSValue error = JS_NewSyntaxError(env->context, message);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_NewString(env->context, code), JS_PROP_C_W_E);
   }
 
   JS_Throw(env->context, error);
@@ -7022,7 +6919,7 @@ js_throw_reference_error(js_env_t *env, const char *code, const char *message) {
   JSValue error = JS_NewReferenceError(env->context, message);
 
   if (code) {
-    JS_SetPropertyStr(env->context, error, "code", JS_NewString(env->context, code));
+    JS_DefinePropertyValueStr(env->context, error, "code", JS_NewString(env->context, code), JS_PROP_C_W_E);
   }
 
   JS_Throw(env->context, error);
@@ -7094,6 +6991,8 @@ int
 js_fatal_exception(js_env_t *env, js_value_t *error) {
   // Allow continuing even with a pending exception
 
+  if (env->callbacks.uncaught_exception == NULL) return 0;
+
   js__uncaught_exception(env, JS_DupValue(env->context, error->value));
 
   return 0;
@@ -7133,6 +7032,8 @@ js_request_garbage_collection(js_env_t *env) {
     JS_RunGC(env->runtime);
 
     js__run_pending_finalizers(env);
+
+    if (JS_IsJobPending(env->runtime)) uv_ref((uv_handle_t *) &env->check);
   }
 
   return 0;
