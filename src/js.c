@@ -39,6 +39,7 @@ typedef struct js_promise_rejection_s js_promise_rejection_t;
 typedef struct js_threadsafe_queue_s js_threadsafe_queue_t;
 typedef struct js_teardown_task_s js_teardown_task_t;
 typedef struct js_teardown_queue_s js_teardown_queue_t;
+typedef struct js_continuation_snapshot_s js_continuation_snapshot_t;
 
 struct js_deferred_teardown_s {
   js_env_t *env;
@@ -90,6 +91,9 @@ struct js_env_s {
   JSRuntime *runtime;
   JSContext *context;
   JSValue bindings;
+
+  JSValue continuation_snapshot;
+  js_continuation_scope_t *continuation_scope;
 
   JSValue default_module_id;
   JSAtom function_id_key;
@@ -257,7 +261,21 @@ struct js_arraybuffer_backing_store_s {
 struct js_promise_rejection_s {
   JSValue promise;
   JSValue reason;
+  JSValue snapshot;
   js_promise_rejection_t *next;
+};
+
+struct js_continuation_scope_s {
+  JSValue previous;
+  js_continuation_scope_t *parent;
+};
+
+struct js_continuation_snapshot_s {
+  uint32_t len;
+  struct {
+    JSValue key;
+    JSValue value;
+  } entries[];
 };
 
 static const uint8_t js_threadsafe_function_idle = 0x0;
@@ -352,6 +370,20 @@ static JSClassDef js__microtask_class = {
   .finalizer = js__on_microtask_finalize,
 };
 
+static void
+js__on_continuation_snapshot_finalize(JSRuntime *runtime, JSValue value);
+
+static void
+js__on_continuation_snapshot_mark(JSRuntime *runtime, JSValueConst value, JS_MarkFunc *mark);
+
+static JSClassID js__continuation_snapshot_class_id;
+
+static JSClassDef js__continuation_snapshot_class = {
+  .class_name = "ContinuationSnapshot",
+  .finalizer = js__on_continuation_snapshot_finalize,
+  .gc_mark = js__on_continuation_snapshot_mark,
+};
+
 static int
 js__on_delegate_get_own_property(JSContext *context, JSPropertyDescriptor *descriptor, JSValueConst object, JSAtom property);
 
@@ -389,6 +421,7 @@ js_create_platform(uv_loop_t *loop, const js_platform_options_t *options, js_pla
   JS_NewClassID(&js__constructor_class_id);
   JS_NewClassID(&js__delegate_class_id);
   JS_NewClassID(&js__microtask_class_id);
+  JS_NewClassID(&js__continuation_snapshot_class_id);
 
   js_platform_t *platform = malloc(sizeof(js_platform_t));
 
@@ -560,30 +593,65 @@ js__uncaught_exception(js_env_t *env, JSValue error) {
   }
 }
 
-static void
-js__on_unhandled_rejection(JSContext *context, JSValue promise, JSValue reason) {
-  int err;
+static js_continuation_scope_t *
+js__open_continuation_scope(js_env_t *env, JSValue snapshot) {
+  js_continuation_scope_t *scope = malloc(sizeof(js_continuation_scope_t));
 
-  js_env_t *env = (js_env_t *) JS_GetContextOpaque(context);
+  scope->previous = env->continuation_snapshot;
+  scope->parent = env->continuation_scope;
+
+  env->continuation_snapshot = snapshot;
+  env->continuation_scope = scope;
+
+  return scope;
+}
+
+static void
+js__close_continuation_scope(js_env_t *env, js_continuation_scope_t *scope) {
+  assert(scope == env->continuation_scope);
+
+  JS_FreeValue(env->context, env->continuation_snapshot);
+
+  env->continuation_snapshot = scope->previous;
+  env->continuation_scope = scope->parent;
+
+  free(scope);
+}
+
+static void
+js__free_promise_rejection(JSContext *context, js_promise_rejection_t *rejection) {
+  JS_FreeValue(context, rejection->promise);
+  JS_FreeValue(context, rejection->reason);
+  JS_FreeValue(context, rejection->snapshot);
+}
+
+static void
+js__on_unhandled_rejection(js_env_t *env, js_promise_rejection_t *rejection) {
+  int err;
 
   if (env->callbacks.unhandled_rejection) {
     js_handle_scope_t *scope;
     err = js_open_handle_scope(env, &scope);
     assert(err == 0);
 
+    JSValue snapshot = env->continuation_snapshot;
+
+    env->continuation_snapshot = rejection->snapshot;
+
     env->callbacks.unhandled_rejection(
       env,
-      &(js_value_t){reason},
-      &(js_value_t){promise},
+      &(js_value_t){rejection->reason},
+      &(js_value_t){rejection->promise},
       env->callbacks.unhandled_rejection_data
     );
+
+    env->continuation_snapshot = snapshot;
 
     err = js_close_handle_scope(env, scope);
     assert(err == 0);
   }
 
-  JS_FreeValue(context, promise);
-  JS_FreeValue(context, reason);
+  js__free_promise_rejection(env->context, rejection);
 }
 
 static void
@@ -598,8 +666,7 @@ js__on_promise_rejection(JSContext *context, JSValueConst promise, JSValueConst 
 
     while (next) {
       if (JS_VALUE_GET_PTR(next->promise) == JS_VALUE_GET_PTR(promise)) {
-        JS_FreeValue(context, next->promise);
-        JS_FreeValue(context, next->reason);
+        js__free_promise_rejection(context, next);
 
         if (prev) prev->next = next->next;
         else env->promise_rejections = next->next;
@@ -615,6 +682,7 @@ js__on_promise_rejection(JSContext *context, JSValueConst promise, JSValueConst 
 
     node->promise = JS_DupValue(context, promise);
     node->reason = JS_DupValue(context, reason);
+    node->snapshot = JS_DupValue(context, env->continuation_snapshot);
     node->next = env->promise_rejections;
 
     env->promise_rejections = node;
@@ -664,7 +732,7 @@ js__run_microtasks(js_env_t *env) {
   env->promise_rejections = NULL;
 
   while (next) {
-    js__on_unhandled_rejection(env->context, next->promise, next->reason);
+    js__on_unhandled_rejection(env, next);
 
     prev = next;
     next = next->next;
@@ -933,6 +1001,12 @@ js__defer_finalizer(js_env_t *env, js_finalizer_t *finalizer) {
 
 static void
 js__run_pending_finalizers(js_env_t *env) {
+  // The snapshot is moved aside rather than referenced, as this also runs after
+  // the runtime has been freed at teardown.
+  JSValue snapshot = env->continuation_snapshot;
+
+  env->continuation_snapshot = JS_UNDEFINED;
+
   while (!intrusive_list_empty(&env->pending_finalizers)) {
     js_finalizer_t *finalizer = intrusive_entry(env->pending_finalizers.head, js_finalizer_t, list);
 
@@ -942,6 +1016,8 @@ js__run_pending_finalizers(js_env_t *env) {
 
     free(finalizer);
   }
+
+  env->continuation_snapshot = snapshot;
 }
 
 static void
@@ -982,6 +1058,11 @@ js__close_env(js_env_t *env) {
   JS_FreeAtom(env->context, env->function_id_key);
   JS_FreeAtom(env->context, env->function_bytecode_key);
   JS_FreeValue(env->context, env->bindings);
+  while (env->continuation_scope) {
+    js__close_continuation_scope(env, env->continuation_scope);
+  }
+
+  JS_FreeValue(env->context, env->continuation_snapshot);
   JS_FreeContext(env->context);
   JS_FreeRuntime(env->runtime);
 
@@ -1070,6 +1151,9 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   env->context = JS_NewContext(runtime);
   env->bindings = JS_NewObject(env->context);
 
+  env->continuation_snapshot = JS_UNDEFINED;
+  env->continuation_scope = NULL;
+
   env->default_module_id = JS_NULL;
 
   JSValue function_id_key = JS_NewSymbol(env->context, "__function_id", false);
@@ -1129,6 +1213,9 @@ js_create_env(uv_loop_t *loop, js_platform_t *platform, const js_env_options_t *
   assert(err == 0);
 
   err = JS_NewClass(runtime, js__microtask_class_id, &js__microtask_class);
+  assert(err == 0);
+
+  err = JS_NewClass(runtime, js__continuation_snapshot_class_id, &js__continuation_snapshot_class);
   assert(err == 0);
 
   err = uv_prepare_init(loop, &env->prepare);
@@ -5015,6 +5102,129 @@ js_strict_equals(js_env_t *env, js_value_t *a, js_value_t *b, bool *result) {
   // Allow continuing even with a pending exception
 
   *result = JS_StrictEq(env->context, a->value, b->value);
+
+  return 0;
+}
+
+static void
+js__on_continuation_snapshot_finalize(JSRuntime *runtime, JSValue value) {
+  js_continuation_snapshot_t *snapshot = (js_continuation_snapshot_t *) JS_GetOpaque(value, js__continuation_snapshot_class_id);
+
+  for (uint32_t i = 0; i < snapshot->len; i++) {
+    JS_FreeValueRT(runtime, snapshot->entries[i].key);
+    JS_FreeValueRT(runtime, snapshot->entries[i].value);
+  }
+
+  free(snapshot);
+}
+
+static void
+js__on_continuation_snapshot_mark(JSRuntime *runtime, JSValueConst value, JS_MarkFunc *mark) {
+  js_continuation_snapshot_t *snapshot = (js_continuation_snapshot_t *) JS_GetOpaque(value, js__continuation_snapshot_class_id);
+
+  for (uint32_t i = 0; i < snapshot->len; i++) {
+    JS_MarkValue(runtime, snapshot->entries[i].key, mark);
+    JS_MarkValue(runtime, snapshot->entries[i].value, mark);
+  }
+}
+
+static inline js_continuation_snapshot_t *
+js__get_continuation_snapshot(js_env_t *env) {
+  return (js_continuation_snapshot_t *) JS_GetOpaque(env->continuation_snapshot, js__continuation_snapshot_class_id);
+}
+
+int
+js_get_continuation_snapshot(js_env_t *env, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = JS_DupValue(env->context, env->continuation_snapshot);
+
+  *result = wrapper;
+
+  return 0;
+}
+
+int
+js_open_continuation_scope(js_env_t *env, js_value_t *snapshot, js_continuation_scope_t **result) {
+  // Allow continuing even with a pending exception
+
+  *result = js__open_continuation_scope(env, snapshot ? JS_DupValue(env->context, snapshot->value) : JS_UNDEFINED);
+
+  return 0;
+}
+
+int
+js_close_continuation_scope(js_env_t *env, js_continuation_scope_t *scope) {
+  // Allow continuing even with a pending exception
+
+  js__close_continuation_scope(env, scope);
+
+  return 0;
+}
+
+int
+js_get_continuation_variable(js_env_t *env, js_value_t *symbol, js_value_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_continuation_snapshot_t *snapshot = js__get_continuation_snapshot(env);
+
+  JSValue value = JS_UNDEFINED;
+
+  for (uint32_t i = 0, n = snapshot ? snapshot->len : 0; i < n; i++) {
+    if (JS_StrictEq(env->context, snapshot->entries[i].key, symbol->value)) {
+      value = JS_DupValue(env->context, snapshot->entries[i].value);
+      break;
+    }
+  }
+
+  js_value_t *wrapper = js__create_handle(env, env->scope);
+
+  wrapper->value = value;
+
+  *result = wrapper;
+
+  return 0;
+}
+
+int
+js_open_continuation_variable_scope(js_env_t *env, js_value_t *symbol, js_value_t *value, js_continuation_scope_t **result) {
+  // Allow continuing even with a pending exception
+
+  js_continuation_snapshot_t *current = js__get_continuation_snapshot(env);
+
+  uint32_t len = current ? current->len : 0;
+
+  js_continuation_snapshot_t *next = malloc(sizeof(js_continuation_snapshot_t) + (len + 1) * sizeof(next->entries[0]));
+
+  next->len = 0;
+
+  for (uint32_t i = 0; i < len; i++) {
+    if (JS_StrictEq(env->context, current->entries[i].key, symbol->value)) continue;
+
+    next->entries[next->len].key = JS_DupValue(env->context, current->entries[i].key);
+    next->entries[next->len].value = JS_DupValue(env->context, current->entries[i].value);
+    next->len++;
+  }
+
+  if (!JS_IsUndefined(value->value)) {
+    next->entries[next->len].key = JS_DupValue(env->context, symbol->value);
+    next->entries[next->len].value = JS_DupValue(env->context, value->value);
+    next->len++;
+  }
+
+  JSValue snapshot = JS_UNDEFINED;
+
+  if (next->len == 0) {
+    free(next);
+  } else {
+    snapshot = JS_NewObjectClass(env->context, js__continuation_snapshot_class_id);
+
+    JS_SetOpaque(snapshot, next);
+  }
+
+  *result = js__open_continuation_scope(env, snapshot);
 
   return 0;
 }
