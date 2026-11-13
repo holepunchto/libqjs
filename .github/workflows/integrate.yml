@@ -1,4 +1,4 @@
-name: Test
+name: Integrate
 on:
   push:
     branches:
@@ -59,15 +59,13 @@ jobs:
             platform: win32
             arch: arm64
     runs-on: ${{ matrix.os }}
-    name: ${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.tags }}
+    name: Test / ${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.tags }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: holepunchto/actions/bare-base@v1
+      - uses: holepunchto/actions/compile-prebuilds@v1
         with:
-          node-version: lts/*
-      - run: npm install -g bare-make
-      - run: npm install
-      - run: bare-make generate --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --debug ${{ matrix.flags }}
-      - run: bare-make build
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+          flags: --debug ${{ matrix.flags }}
       - run: bare-make test
         if: ${{ matrix.platform == 'linux' || matrix.platform == 'darwin' || (matrix.platform == 'win32' && matrix.arch == 'x64') }}
