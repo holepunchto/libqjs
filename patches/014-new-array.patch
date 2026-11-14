@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index de40bc1..fc4b22d 100644
+index 73a2fe2..15d8ba0 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -6078,10 +6078,21 @@ JSValue JS_NewObjectProto(JSContext *ctx, JSValueConst proto)
@@ -54,7 +54,7 @@ index de40bc1..fc4b22d 100644
      if (JS_IsException(obj))
          goto fail;
      if (len > 0) {
-@@ -25307,7 +25318,7 @@ static __exception int js_parse_template(JSParseState *s, int call, int *argc)
+@@ -25318,7 +25329,7 @@ static __exception int js_parse_template(JSParseState *s, int call, int *argc)
      if (call) {
          /* Create a template object: an array of cooked strings */
          /* Create an array of raw strings and store it to the raw property */
@@ -63,7 +63,7 @@ index de40bc1..fc4b22d 100644
          if (JS_IsException(template_object))
              return -1;
          //        pool_idx = s->cur_func->cpool_count;
-@@ -25315,7 +25326,7 @@ static __exception int js_parse_template(JSParseState *s, int call, int *argc)
+@@ -25326,7 +25337,7 @@ static __exception int js_parse_template(JSParseState *s, int call, int *argc)
          JS_FreeValue(ctx, template_object);
          if (ret)
              return -1;
@@ -72,7 +72,7 @@ index de40bc1..fc4b22d 100644
          if (JS_IsException(raw_array))
              return -1;
          if (JS_DefinePropertyValue(ctx, template_object, JS_ATOM_raw,
-@@ -40466,7 +40477,7 @@ static JSValue JS_ReadArray(BCReaderState *s, int tag)
+@@ -40477,7 +40488,7 @@ static JSValue JS_ReadArray(BCReaderState *s, int tag)
      int ret, prop_flags;
      BOOL is_template;
  
@@ -81,7 +81,7 @@ index de40bc1..fc4b22d 100644
      if (BC_add_object_ref(s, obj))
          goto fail;
      is_template = (tag == BC_TAG_TEMPLATE_OBJECT);
-@@ -41773,7 +41784,7 @@ static JSValue JS_GetOwnPropertyNames2(JSContext *ctx, JSValueConst obj1,
+@@ -41784,7 +41795,7 @@ static JSValue JS_GetOwnPropertyNames2(JSContext *ctx, JSValueConst obj1,
      p = JS_VALUE_GET_OBJ(obj);
      if (JS_GetOwnPropertyNamesInternal(ctx, &atoms, &len, p, flags & ~JS_GPN_ENUM_ONLY))
          goto exception;
@@ -90,7 +90,7 @@ index de40bc1..fc4b22d 100644
      if (JS_IsException(r))
          goto exception;
      for(j = i = 0; i < len; i++) {
-@@ -41805,7 +41816,7 @@ static JSValue JS_GetOwnPropertyNames2(JSContext *ctx, JSValueConst obj1,
+@@ -41816,7 +41827,7 @@ static JSValue JS_GetOwnPropertyNames2(JSContext *ctx, JSValueConst obj1,
                  goto exception;
              break;
          case JS_ITERATOR_KIND_KEY_AND_VALUE:
@@ -99,7 +99,7 @@ index de40bc1..fc4b22d 100644
              if (JS_IsException(val))
                  goto exception;
              key = JS_AtomToValue(ctx, atom);
-@@ -42806,7 +42817,7 @@ static JSValue iterator_to_array(JSContext *ctx, JSValueConst items)
+@@ -42809,7 +42820,7 @@ static JSValue iterator_to_array(JSContext *ctx, JSValueConst items)
      next_method = JS_GetProperty(ctx, iter, JS_ATOM_next);
      if (JS_IsException(next_method))
          goto exception;
@@ -108,7 +108,7 @@ index de40bc1..fc4b22d 100644
      if (JS_IsException(r))
          goto exception;
      for (k = 0;; k++) {
-@@ -43194,7 +43205,7 @@ static JSValue js_array_from(JSContext *ctx, JSValueConst this_val,
+@@ -43197,7 +43208,7 @@ static JSValue js_array_from(JSContext *ctx, JSValueConst this_val,
          if (JS_IsConstructor(ctx, this_val))
              r = JS_CallConstructor(ctx, this_val, 0, NULL);
          else
@@ -117,7 +117,7 @@ index de40bc1..fc4b22d 100644
          if (JS_IsException(r))
              goto exception;
          enum_obj = JS_GetIterator2(ctx, items, iter);
-@@ -43526,7 +43537,7 @@ static void js_array_from_async_resume(JSContext *ctx, JSValueConst obj,
+@@ -43529,7 +43540,7 @@ static void js_array_from_async_resume(JSContext *ctx, JSValueConst obj,
                  if (JS_IsConstructor(ctx, s->ctor)) {
                      val = JS_CallConstructor(ctx, s->ctor, 0, NULL);
                  } else {
@@ -126,7 +126,7 @@ index de40bc1..fc4b22d 100644
                  }
                  if (JS_IsException(val))
                      goto throw_close;
-@@ -43794,7 +43805,7 @@ static JSValue js_array_of(JSContext *ctx, JSValueConst this_val,
+@@ -43797,7 +43808,7 @@ static JSValue js_array_of(JSContext *ctx, JSValueConst this_val,
          args[0] = JS_NewInt32(ctx, argc);
          obj = JS_CallConstructor(ctx, this_val, 1, (JSValueConst *)args);
      } else {
@@ -135,7 +135,7 @@ index de40bc1..fc4b22d 100644
      }
      if (JS_IsException(obj))
          return JS_EXCEPTION;
-@@ -44150,7 +44161,7 @@ static JSValue js_array_every(JSContext *ctx, JSValueConst this_val,
+@@ -44153,7 +44164,7 @@ static JSValue js_array_every(JSContext *ctx, JSValueConst this_val,
              goto exception;
          break;
      case special_filter | special_TA:
@@ -144,7 +144,7 @@ index de40bc1..fc4b22d 100644
          if (JS_IsException(ret))
              goto exception;
          break;
-@@ -46240,7 +46251,7 @@ static JSValue js_iterator_zip_next(JSContext *ctx, JSValueConst this_val,
+@@ -46243,7 +46254,7 @@ static JSValue js_iterator_zip_next(JSContext *ctx, JSValueConst this_val,
                  }
              }
          } else {
@@ -153,7 +153,7 @@ index de40bc1..fc4b22d 100644
              for (i = 0; !JS_IsException(output) && i < it->count; i++) {
                  int r = JS_DefinePropertyValueUint32(ctx, output, i,
                                                       results[i],
-@@ -47044,7 +47055,7 @@ static JSValue js_iterator_proto_toArray(JSContext *ctx, JSValueConst this_val,
+@@ -47047,7 +47058,7 @@ static JSValue js_iterator_proto_toArray(JSContext *ctx, JSValueConst this_val,
      method = JS_GetProperty(ctx, this_val, JS_ATOM_next);
      if (JS_IsException(method))
          return JS_EXCEPTION;
@@ -162,7 +162,7 @@ index de40bc1..fc4b22d 100644
      if (JS_IsException(result))
          goto exception;
      for (idx = 0; /*empty*/; idx++) {
-@@ -48985,7 +48996,7 @@ static JSValue js_string_split(JSContext *ctx, JSValueConst this_val,
+@@ -48988,7 +48999,7 @@ static JSValue js_string_split(JSContext *ctx, JSValueConst this_val,
      S = JS_ToString(ctx, O);
      if (JS_IsException(S))
          goto exception;
@@ -171,7 +171,7 @@ index de40bc1..fc4b22d 100644
      if (JS_IsException(A))
          goto exception;
      lengthA = 0;
-@@ -51175,7 +51186,7 @@ static JSValue js_regexp_exec(JSContext *ctx, JSValueConst this_val,
+@@ -51178,7 +51189,7 @@ static JSValue js_regexp_exec(JSContext *ctx, JSValueConst this_val,
                  goto fail;
          }
          if (re_flags & LRE_FLAG_INDICES) {
@@ -180,7 +180,7 @@ index de40bc1..fc4b22d 100644
              if (JS_IsException(indices))
                  goto fail;
              if (group_name_ptr) {
-@@ -51225,7 +51236,7 @@ static JSValue js_regexp_exec(JSContext *ctx, JSValueConst this_val,
+@@ -51228,7 +51239,7 @@ static JSValue js_regexp_exec(JSContext *ctx, JSValueConst this_val,
              if (!JS_IsUndefined(indices)) {
                  val = JS_UNDEFINED;
                  if (start != -1) {
@@ -189,7 +189,7 @@ index de40bc1..fc4b22d 100644
                      if (JS_IsException(val))
                          goto fail;
                      if (JS_DefinePropertyValueUint32(ctx, val, 0,
-@@ -51496,7 +51507,7 @@ static JSValue js_regexp_Symbol_match(JSContext *ctx, JSValueConst this_val,
+@@ -51499,7 +51510,7 @@ static JSValue js_regexp_Symbol_match(JSContext *ctx, JSValueConst this_val,
  
          if (JS_SetProperty(ctx, rx, JS_ATOM_lastIndex, JS_NewInt32(ctx, 0)) < 0)
              goto exception;
@@ -198,7 +198,7 @@ index de40bc1..fc4b22d 100644
          if (JS_IsException(A))
              goto exception;
          n = 0;
-@@ -51935,7 +51946,7 @@ static JSValue js_regexp_Symbol_replace(JSContext *ctx, JSValueConst this_val,
+@@ -51938,7 +51949,7 @@ static JSValue js_regexp_Symbol_replace(JSContext *ctx, JSValueConst this_val,
          /* ignore substition if going backward (can happen
             with custom regexp object) */
          JS_FreeValue(ctx, tab);
@@ -207,7 +207,7 @@ index de40bc1..fc4b22d 100644
          if (JS_IsException(tab))
              goto exception;
          if (JS_DefinePropertyValueInt64(ctx, tab, 0, JS_DupValue(ctx, matched),
-@@ -52123,7 +52134,7 @@ static JSValue js_regexp_Symbol_split(JSContext *ctx, JSValueConst this_val,
+@@ -52126,7 +52137,7 @@ static JSValue js_regexp_Symbol_split(JSContext *ctx, JSValueConst this_val,
      splitter = JS_CallConstructor(ctx, ctor, 2, args);
      if (JS_IsException(splitter))
          goto exception;
@@ -216,7 +216,7 @@ index de40bc1..fc4b22d 100644
      if (JS_IsException(A))
          goto exception;
      lengthA = 0;
-@@ -52546,7 +52557,7 @@ static JSValue json_parse_value(JSParseState *s, JSONParseRecord *pr)
+@@ -52549,7 +52560,7 @@ static JSValue json_parse_value(JSParseState *s, JSONParseRecord *pr)
              
              if (json_next_token(s))
                  goto fail;
@@ -225,7 +225,7 @@ index de40bc1..fc4b22d 100644
              if (JS_IsException(val))
                  goto fail;
              if (pr) {
-@@ -53249,7 +53260,7 @@ JSValue JS_JSONStringify(JSContext *ctx, JSValueConst obj,
+@@ -53252,7 +53263,7 @@ JSValue JS_JSONStringify(JSContext *ctx, JSValueConst obj,
      wrapper = JS_UNDEFINED;
  
      string_buffer_init(ctx, jsc->b, 0);
@@ -234,7 +234,7 @@ index de40bc1..fc4b22d 100644
      if (JS_IsException(jsc->stack))
          goto exception;
      if (JS_IsFunction(ctx, replacer)) {
-@@ -53260,7 +53271,7 @@ JSValue JS_JSONStringify(JSContext *ctx, JSValueConst obj,
+@@ -53263,7 +53274,7 @@ JSValue JS_JSONStringify(JSContext *ctx, JSValueConst obj,
              goto exception;
          if (res) {
              /* XXX: enumeration is not fully correct */
@@ -243,7 +243,7 @@ index de40bc1..fc4b22d 100644
              if (JS_IsException(jsc->property_list))
                  goto exception;
              if (js_get_length64(ctx, &n, replacer))
-@@ -55437,7 +55448,7 @@ static JSValue js_object_groupBy(JSContext *ctx, JSValueConst this_val,
+@@ -55440,7 +55451,7 @@ static JSValue js_object_groupBy(JSContext *ctx, JSValueConst this_val,
              goto exception;
  
          if (JS_IsUndefined(prop)) {
@@ -252,7 +252,7 @@ index de40bc1..fc4b22d 100644
              if (JS_IsException(prop))
                  goto exception;
              if (is_map) {
-@@ -57682,10 +57693,10 @@ static JSValue js_promise_all(JSContext *ctx, JSValueConst this_val,
+@@ -57685,10 +57696,10 @@ static JSValue js_promise_all(JSContext *ctx, JSValueConst this_val,
          next_method = JS_GetProperty(ctx, iter, JS_ATOM_next);
          if (JS_IsException(next_method))
              goto fail_reject;
@@ -265,7 +265,7 @@ index de40bc1..fc4b22d 100644
          if (JS_IsException(resolve_element_env))
              goto fail_reject;
          /* remainingElementsCount field */
-@@ -57951,13 +57962,13 @@ static JSValue js_promise_allKeyed(JSContext *ctx, JSValueConst this_val,
+@@ -57954,13 +57965,13 @@ static JSValue js_promise_allKeyed(JSContext *ctx, JSValueConst this_val,
          JS_ThrowTypeErrorNotAnObject(ctx);
          goto fail_reject;
      }
@@ -282,7 +282,7 @@ index de40bc1..fc4b22d 100644
      if (JS_IsException(env))
          goto fail_reject;
      /* remainingElementsCount field */
-@@ -58011,7 +58022,7 @@ static JSValue js_promise_allKeyed(JSContext *ctx, JSValueConst this_val,
+@@ -58014,7 +58025,7 @@ static JSValue js_promise_allKeyed(JSContext *ctx, JSValueConst this_val,
              goto fail_reject;
  
          /* the [[AlreadyCalled]] record shared by both handlers */
@@ -291,7 +291,7 @@ index de40bc1..fc4b22d 100644
          if (JS_IsException(called_box)) {
              JS_FreeValue(ctx, next_promise);
              goto fail_reject;
-@@ -64110,7 +64121,7 @@ static JSValue js_array_from_iterator(JSContext *ctx, uint32_t *plen,
+@@ -64120,7 +64131,7 @@ static JSValue js_array_from_iterator(JSContext *ctx, uint32_t *plen,
      uint32_t k;
  
      *plen = 0;

@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index d2710fb..12ee22c 100644
+index 9e65210..5b2934a 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -3939,6 +3939,103 @@ JSClassID JS_GetClassID(JSValueConst v)

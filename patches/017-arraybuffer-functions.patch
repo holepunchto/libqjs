@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index dd86b0c..418649d 100644
+index 31fff50..0301e59 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -397,6 +397,8 @@ struct JSRuntime {
@@ -24,7 +24,7 @@ index dd86b0c..418649d 100644
  void JS_SetStripInfo(JSRuntime *rt, int flags)
  {
      rt->strip_flags = flags;
-@@ -60909,6 +60917,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -60912,6 +60920,14 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
              if (!abuf->data)
                  goto fail;
              memset(abuf->data, 0, sab_alloc_len);
@@ -39,7 +39,7 @@ index dd86b0c..418649d 100644
          } else {
              /* the allocation must be done after the object creation */
              abuf->data = js_mallocz(ctx, max_int(len, 1));
-@@ -60940,7 +60956,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
+@@ -60943,7 +60959,23 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
  
  static void js_array_buffer_free(JSRuntime *rt, void *opaque, void *ptr)
  {
@@ -64,7 +64,7 @@ index dd86b0c..418649d 100644
  }
  
  static JSValue js_array_buffer_constructor2(JSContext *ctx,
-@@ -61242,6 +61274,19 @@ int JS_SetImmutableArrayBuffer(JSValueConst obj, BOOL immutable)
+@@ -61250,6 +61282,19 @@ int JS_SetImmutableArrayBuffer(JSValueConst obj, BOOL immutable)
      return 0;
  }
  
@@ -84,7 +84,7 @@ index dd86b0c..418649d 100644
  /* get an ArrayBuffer or SharedArrayBuffer */
  static JSArrayBuffer *js_get_array_buffer(JSContext *ctx, JSValueConst obj)
  {
-@@ -61358,7 +61403,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -61366,7 +61411,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  res = js_array_buffer_constructor2(ctx, JS_UNDEFINED, 0, pmax_len, JS_CLASS_ARRAY_BUFFER);
                  if (JS_IsException(res))
                      return res;
@@ -93,7 +93,7 @@ index dd86b0c..418649d 100644
                  if (!new_bs) {
                      JS_FreeValue(ctx, res);
                      return JS_EXCEPTION;
-@@ -61366,7 +61411,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
+@@ -61374,7 +61419,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx,
                  if (new_len > old_len)
                      memset(new_bs + old_len, 0, new_len - old_len);
                  new_abuf = JS_GetOpaque2(ctx, res, JS_CLASS_ARRAY_BUFFER);
@@ -102,7 +102,7 @@ index dd86b0c..418649d 100644
                  new_abuf->data = new_bs;
                  new_abuf->byte_length = new_len;
              }
-@@ -61434,7 +61479,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
+@@ -61444,7 +61489,7 @@ static JSValue js_array_buffer_resize(JSContext *ctx, JSValueConst this_val,
          // 2 bytes big in A, and 1 byte big in B
          abuf->byte_length = len;
      } else {

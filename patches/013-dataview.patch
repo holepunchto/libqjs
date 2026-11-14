@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 1844e8c..de40bc1 100644
+index 16979dc..73a2fe2 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -64480,6 +64480,33 @@ static JSValue js_dataview_get_buffer(JSContext *ctx, JSValueConst this_val)
+@@ -64490,6 +64490,33 @@ static JSValue js_dataview_get_buffer(JSContext *ctx, JSValueConst this_val)
      return JS_DupValue(ctx, JS_MKPTR(JS_TAG_OBJECT, ta->buffer));
  }
  

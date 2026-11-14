@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index fc4b22d..f0719ab 100644
+index 15d8ba0..bad71e7 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -937,6 +937,10 @@ struct JSModuleDef {
@@ -23,7 +23,7 @@ index fc4b22d..f0719ab 100644
              /* warning: the module may be referenced elsewhere. It
                 could be simpler to use an array instead of a list for
                 'ctx->loaded_modules' */
-@@ -31795,14 +31800,18 @@ static int js_resolve_module(JSContext *ctx, JSModuleDef *m)
+@@ -31806,14 +31811,18 @@ static int js_resolve_module(JSContext *ctx, JSModuleDef *m)
                                                    rme->module_name,
                                                    rme->attributes);
          if (!m1)
@@ -44,7 +44,7 @@ index fc4b22d..f0719ab 100644
  }
  
  /* Create the <eval> function associated with the module */
-@@ -38603,6 +38612,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
+@@ -38614,6 +38623,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
              m = js_new_module_def(ctx, module_name);
              if (!m)
                  return JS_EXCEPTION;
@@ -52,7 +52,7 @@ index fc4b22d..f0719ab 100644
              js_mode |= JS_MODE_STRICT;
          }
      }
-@@ -38656,10 +38666,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
+@@ -38667,10 +38677,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
      fun_obj = js_create_function(ctx, fd);
      if (JS_IsException(fun_obj))
          goto fail1;
@@ -67,7 +67,7 @@ index fc4b22d..f0719ab 100644
              goto fail1;
          fun_obj = JS_NewModuleValue(ctx, m);
      }
-@@ -40335,6 +40347,7 @@ static JSValue JS_ReadModule(BCReaderState *s)
+@@ -40346,6 +40358,7 @@ static JSValue JS_ReadModule(BCReaderState *s)
      m = js_new_module_def(ctx, module_name);
      if (!m)
          goto fail;

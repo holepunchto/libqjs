@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index 737cfeb..d2710fb 100644
+index 03af563..9e65210 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -3925,6 +3925,11 @@ JSClassID JS_NewClassID(JSClassID *pclass_id)

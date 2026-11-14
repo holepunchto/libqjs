@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index 12ee22c..6741eb2 100644
+index 5b2934a..9c856b6 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -1376,7 +1376,7 @@ static BOOL js_string_eq(JSContext *ctx,
@@ -11,7 +11,7 @@ index 12ee22c..6741eb2 100644
  static int JS_SetPropertyValue(JSContext *ctx, JSValueConst this_obj,
                                 JSValue prop, JSValue val, int flags);
  static int JS_NumberIsInteger(JSContext *ctx, JSValueConst val);
-@@ -13439,7 +13439,7 @@ int JS_ToFloat64(JSContext *ctx, double *pres, JSValueConst val)
+@@ -13443,7 +13443,7 @@ int JS_ToFloat64(JSContext *ctx, double *pres, JSValueConst val)
      return JS_ToFloat64Free(ctx, pres, JS_DupValue(ctx, val));
  }
  

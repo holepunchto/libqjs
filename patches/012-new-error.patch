@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index e14dc35..1844e8c 100644
+index c7e2083..16979dc 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -7888,9 +7888,46 @@ static BOOL is_backtrace_needed(JSContext *ctx, JSValueConst obj)

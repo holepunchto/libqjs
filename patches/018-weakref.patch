@@ -1,8 +1,8 @@
 diff --git a/quickjs.c b/quickjs.c
-index 418649d..652f483 100644
+index 0301e59..36c6a99 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -65815,41 +65815,63 @@ static void weakref_delete_weakref(JSRuntime *rt, JSWeakRefHeader *wh)
+@@ -65825,41 +65825,63 @@ static void weakref_delete_weakref(JSRuntime *rt, JSWeakRefHeader *wh)
      }
  }
  

@@ -5,7 +5,7 @@ find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 project(js C)
 
 fetch_package(
-  "github:bellard/quickjs#092277a"
+  "github:bellard/quickjs#e585640"
   SOURCE_DIR qjs
   PATCHES
     patches/001-get-version.patch

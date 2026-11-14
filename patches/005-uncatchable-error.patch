@@ -1,5 +1,5 @@
 diff --git a/quickjs.c b/quickjs.c
-index 6741eb2..2615b3f 100644
+index 9c856b6..692450f 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -1022,6 +1022,7 @@ struct JSObject {
@@ -18,7 +18,7 @@ index 6741eb2..2615b3f 100644
      p->weakref_count = 0;
      p->u.opaque = NULL;
      p->shape = sh;
-@@ -11375,6 +11377,25 @@ void JS_SetUncatchableException(JSContext *ctx, BOOL flag)
+@@ -11379,6 +11381,25 @@ void JS_SetUncatchableException(JSContext *ctx, BOOL flag)
      ctx->rt->current_exception_is_uncatchable = flag;
  }
  
@@ -44,7 +44,7 @@ index 6741eb2..2615b3f 100644
  void JS_SetOpaque(JSValue obj, void *opaque)
  {
     JSObject *p;
-@@ -21373,7 +21394,8 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
+@@ -21384,7 +21405,8 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
          sf->cur_pc = pc;
          build_backtrace(ctx, rt->current_exception, NULL, 0, 0, 0);
      }
