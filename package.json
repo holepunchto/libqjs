@@ -12,6 +12,8 @@
   },
   "homepage": "https://github.com/holepunchto/libqjs#readme",
   "devDependencies": {
-    "cmake-fetch": "^1.0.0"
+    "cmake-fetch": "^1.0.0",
+    "cmake-prelude": "^0.1.2",
+    "cmake-test": "^0.1.0"
   }
 }
