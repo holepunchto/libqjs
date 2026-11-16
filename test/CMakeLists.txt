@@ -491,31 +491,18 @@ list(APPEND skipped_tests
 )
 
 foreach(test IN LISTS tests)
-  add_executable(${test} ${js}/test/${test}.c)
-
-  target_link_libraries(
-    ${test}
-    PRIVATE
-      js_static
-  )
-
-  add_test(
-    NAME ${test}
-    COMMAND ${test}
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-  )
-
-  set_tests_properties(
-    ${test}
-    PROPERTIES
-    TIMEOUT 30
-  )
-
-  if(${test} IN_LIST skipped_tests)
-    set_tests_properties(
-      ${test}
-      PROPERTIES
-      DISABLED ON
-    )
+  if(test IN_LIST skipped_tests)
+    set(disabled ON)
+  else()
+    set(disabled OFF)
   endif()
+
+  add_test_executable(
+    ${test}
+    ${js}/test/${test}.c
+    LINK
+      js::static
+    PROPERTIES
+      DISABLED ${disabled}
+  )
 endforeach()
