@@ -73,18 +73,14 @@ add_library_targets(
     src/js.c
   LINK
     utf::<TYPE>
-  STATIC_LINK
-    uv_a
-  SHARED_LINK
-    uv
+    PRIVATE
+      intrusive::headers
+      qjs
+    STATIC
+      uv_a
+    SHARED
+      uv
   EXPORT OFF
-)
-
-target_link_libraries(
-  js
-  PRIVATE
-    qjs
-    intrusive::headers
 )
 
 target_include_directories(
@@ -92,20 +88,6 @@ target_include_directories(
   INTERFACE
     $<TARGET_PROPERTY:uv,INTERFACE_INCLUDE_DIRECTORIES>
 )
-
-target_sources(
-  js_static
-  PRIVATE
-    $<TARGET_OBJECTS:qjs>
-)
-
-if(TARGET js_shared)
-  target_sources(
-    js_shared
-    PRIVATE
-      $<TARGET_OBJECTS:qjs>
-  )
-endif()
 
 fetch_package("github:holepunchto/libjs" SOURCE_DIR js)
 
