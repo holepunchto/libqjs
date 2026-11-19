@@ -311,6 +311,7 @@ struct js_threadsafe_function_s {
   size_t queue_limit;
   js_threadsafe_function_status_t state;
   size_t thread_count;
+  bool aborted;
   atomic_int dispatch_state;
   void *context;
   js_finalize_cb finalize_cb;
@@ -6672,11 +6673,11 @@ js__threadsafe_function_call(js_threadsafe_function_t *function) {
 
   void *data;
 
-  bool popped = js__threadsafe_queue_pop(&function->queue, &data);
+  bool popped = !function->aborted && js__threadsafe_queue_pop(&function->queue, &data);
 
   if (popped) uv_cond_signal(&function->available);
 
-  bool drained = function->queue.len == 0 && function->state != js_threadsafe_function_open;
+  bool drained = (function->aborted || function->queue.len == 0) && function->state != js_threadsafe_function_open;
 
   uv_mutex_unlock(&function->lock);
 
@@ -6783,6 +6784,7 @@ js_create_threadsafe_function(js_env_t *env, js_value_t *function, size_t queue_
   threadsafe_function->queue_limit = queue_limit;
   threadsafe_function->state = js_threadsafe_function_open;
   threadsafe_function->thread_count = initial_thread_count;
+  threadsafe_function->aborted = false;
 
   atomic_init(&threadsafe_function->dispatch_state, js_threadsafe_function_idle);
 
@@ -6901,6 +6903,7 @@ js_release_threadsafe_function(js_threadsafe_function_t *function, js_threadsafe
 
   if ((function->thread_count == 0 || mode == js_threadsafe_function_abort) && function->state == js_threadsafe_function_open) {
     function->state = js_threadsafe_function_closing;
+    function->aborted = mode == js_threadsafe_function_abort;
 
     uv_cond_broadcast(&function->available);
 
