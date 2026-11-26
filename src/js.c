@@ -178,6 +178,12 @@ struct js_script_s {
   char *name;
 };
 
+// A code cache may outlive the context that created it, so it holds its own
+// copy of the bytecode.
+struct js_code_cache_s {
+  void *data;
+};
+
 struct js_module_resolver_s {
   js_module_t *module;
   js_module_resolve_cb cb;
@@ -1359,13 +1365,18 @@ js_create_snapshot(uv_loop_t *loop, js_platform_t *platform, const js_snapshot_o
 }
 
 int
-js_take_snapshot(js_env_t *env, void **data, size_t *len) {
+js_take_snapshot(js_env_t *env, const void **data, size_t *len, js_snapshot_t **result) {
   int err;
 
   err = js_throw_error(env, NULL, "Unsupported operation");
   assert(err == 0);
 
   return js__error(env);
+}
+
+int
+js_release_snapshot(js_snapshot_t *snapshot) {
+  return -1;
 }
 
 int
@@ -1676,8 +1687,36 @@ js_prepare_script_with_code_cache(js_env_t *env, const char *file, size_t len, i
   return 0;
 }
 
+// Takes ownership of a buffer from `JS_WriteObject()`, which is owned by QuickJS
+// and must be released with `js_free()`.
+static int
+js__create_code_cache(js_env_t *env, uint8_t *buffer, size_t size, const void **data, size_t *len, js_code_cache_t **result) {
+  js_code_cache_t *cache = malloc(sizeof(js_code_cache_t));
+
+  cache->data = malloc(size);
+
+  memcpy(cache->data, buffer, size);
+
+  js_free(env->context, buffer);
+
+  *data = cache->data;
+  *len = size;
+
+  *result = cache;
+
+  return 0;
+}
+
 int
-js_create_script_code_cache(js_env_t *env, js_script_t *script, void **data, size_t *len) {
+js_release_code_cache(js_code_cache_t *cache) {
+  free(cache->data);
+  free(cache);
+
+  return 0;
+}
+
+int
+js_create_script_code_cache(js_env_t *env, js_script_t *script, const void **data, size_t *len, js_code_cache_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
   int err;
@@ -1698,20 +1737,7 @@ js_create_script_code_cache(js_env_t *env, js_script_t *script, void **data, siz
     return js__error(env);
   }
 
-  // `JS_WriteObject()` hands back a buffer owned by QuickJS that must be
-  // released with `js_free()`. Copy it into a plain `malloc()` buffer so the
-  // caller can release it with `free()`.
-
-  void *copy = malloc(size);
-
-  memcpy(copy, buffer, size);
-
-  js_free(env->context, buffer);
-
-  *data = copy;
-  *len = size;
-
-  return 0;
+  return js__create_code_cache(env, buffer, size, data, len, result);
 }
 
 int
@@ -1885,7 +1911,7 @@ js_create_module_with_code_cache(js_env_t *env, const char *name, size_t len, in
 }
 
 int
-js_create_module_code_cache(js_env_t *env, js_module_t *module, void **data, size_t *len) {
+js_create_module_code_cache(js_env_t *env, js_module_t *module, const void **data, size_t *len, js_code_cache_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
   int err;
@@ -1918,19 +1944,7 @@ js_create_module_code_cache(js_env_t *env, js_module_t *module, void **data, siz
     return js__error(env);
   }
 
-  // As with scripts, copy the QuickJS-owned buffer into a plain `malloc()`
-  // buffer the caller can release with `free()`.
-
-  void *copy = malloc(size);
-
-  memcpy(copy, buffer, size);
-
-  js_free(env->context, buffer);
-
-  *data = copy;
-  *len = size;
-
-  return 0;
+  return js__create_code_cache(env, buffer, size, data, len, result);
 }
 
 static int
@@ -3691,7 +3705,7 @@ js_compile_function_with_code_cache(js_env_t *env, const char *name, size_t name
 }
 
 int
-js_create_function_code_cache(js_env_t *env, js_value_t *function, void **data, size_t *len) {
+js_create_function_code_cache(js_env_t *env, js_value_t *function, const void **data, size_t *len, js_code_cache_t **result) {
   if (JS_HasException(env->context)) return js__error(env);
 
   int err;
@@ -3726,20 +3740,7 @@ js_create_function_code_cache(js_env_t *env, js_value_t *function, void **data, 
     return js__error(env);
   }
 
-  // `JS_WriteObject()` hands back a buffer owned by QuickJS that must be
-  // released with `js_free()`. Copy it into a plain `malloc()` buffer so the
-  // caller can release it with `free()`.
-
-  void *copy = malloc(size);
-
-  memcpy(copy, buffer, size);
-
-  js_free(env->context, buffer);
-
-  *data = copy;
-  *len = size;
-
-  return 0;
+  return js__create_code_cache(env, buffer, size, data, len, result);
 }
 
 int
